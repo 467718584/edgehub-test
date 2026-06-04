@@ -4,10 +4,11 @@
 
 | 项目 | 版本 | 说明 |
 |------|------|------|
-| EdgeHub Server | 3.0.x | 边缘设备管理核心服务 |
-| EdgeAgent (RK3588) | 3.0.1 | 设备端 WebSocket 客户端 |
+| EdgeHub Server | 3.1.x | 边缘设备管理核心服务 |
+| EdgeAgent (RK3588) | 3.0.2 | 设备端 WebSocket 客户端 |
+| EdgeAgent (Windows) | 4.1 | Windows 设备端 WebSocket 客户端 |
 | 协议 | EHP v1.0 | EdgeHub Protocol |
-| **最后更新** | **2026-05-28** | WireGuard + EdgeAgent 完全打通 |
+| **最后更新** | **2026-06-04** | Windows 适配 + 双进程Bug修复 |
 
 ## 系统架构
 
@@ -24,9 +25,9 @@
               │ WebSocket    │              │ REST / callbacks
               │              │              │
 ┌─────────────┴──┐   ┌───────┴──────┐   ┌───┴──────────────┐
-│   RK3588       │   │  Windows    │   │  Other Devices  │
-│ EdgeAgent v3.0 │   │  Device      │   │                 │
-│ ✅ ONLINE       │   │  ✅ ONLINE   │   │                 │
+│   RK3588       │   │  Windows     │   │  Other Devices  │
+│ EdgeAgent v3.0 │   │  EdgeAgent   │   │                 │
+│ ✅ ONLINE       │   │  v4.1 ✅     │   │                 │
 └────────────────┘   └──────────────┘   └──────────────────┘
 ```
 
@@ -36,24 +37,35 @@
 
 | 文件路径 | 版本 | 功能说明 |
 |---------|------|---------|
-| `src/app.js` | 3.0.x | EdgeHub 主服务，global.db 挂载修复 |
-| `src/models/database.js` | 3.0.x | 数据库模型，updateDeviceStatus + last_heartbeat 修复 |
-| `src/services/commandQueueService.js` | 3.0.x | 命令队列，WS 优先推送逻辑 |
-| `src/utils/ws-server.js` | 3.0.x | WebSocket 服务，路径 `/ws` |
-| `web/js/app.js` | 3.0.x | 前端渲染，loadDeviceDetail sysinfo JSON 解析修复 |
+| `src/app.js` | 3.1.x | EdgeHub 主服务 |
+| `src/models/database.js` | 3.1.x | 数据库模型 |
+| `src/services/commandQueueService.js` | 3.1.x | 命令队列，WS 优先推送逻辑 |
+| `src/utils/ws-server.js` | 3.1.x | WebSocket 服务，路径 `/ws` |
+| `web/` | 3.1.x | 前端 UI |
 
-### 设备端 (`/var/www/html/`)
+### 设备端 (`/var/www/html/edgeagent/`)
 
 | 文件名 | 版本 | 说明 |
 |-------|------|------|
-| `edgeagent-ws-v3.py` | 3.0.1 | RK3588 EdgeAgent，WebSocket 原生模式 |
-| `edgeagent-full-start-rk3588.sh` | 3.0.1 | 一键启动脚本(WireGuard + EdgeAgent) |
+| `edgeagent-ws-v3.py` | 3.0.2 | RK3588 EdgeAgent，WebSocket 原生模式 |
+| `edgeagent-win.py` | 4.1 | Windows EdgeAgent，psutil 替代 wmic |
+| `Install-EdgeAgent.ps1` | 4.1 | Windows 一键安装脚本 |
 
-### 一键启动脚本
+## 一键部署
 
-**在RK3588上执行（sudo）：**
+### RK3588 设备端
+
 ```bash
 curl -s http://1.13.247.173/edgeagent-full-start-rk3588.sh | sudo bash
+```
+
+### Windows 设备端
+
+PowerShell（管理员）运行：
+
+```powershell
+irm http://1.13.247.173/edgeagent/Install-EdgeAgent.ps1 -OutFile C:\Install-EdgeAgent.ps1
+powershell -ExecutionPolicy Bypass -File C:\Install-EdgeAgent.ps1
 ```
 
 ## 功能特性
@@ -74,7 +86,7 @@ curl -s http://1.13.247.173/edgeagent-full-start-rk3588.sh | sudo bash
 
 ```json
 {
-  "cpu": {"model": "aarch64", "cores": 8, "usage": 12.5},
+  "cpu": {"model": "aarch64/AMD64", "cores": 8, "usage": 12.5},
   "memory": {"total": 7916, "free": 4687, "used": 3229, "percent": 40.8},
   "disk": {"total": 56, "used": 24, "percent": 43.5},
   "load": {"1min": 5.97, "5min": 5.89, "15min": 5.87},
@@ -85,7 +97,7 @@ curl -s http://1.13.247.173/edgeagent-full-start-rk3588.sh | sudo bash
 ### 4. 命令执行闭环
 
 ```
-用户下发命令 → EdgeHub 推送 WS → RK3588 执行 → 结果回传 → 数据库更新
+用户下发命令 → EdgeHub 推送 WS → 设备执行 → 结果回传 → 数据库更新
 ```
 
 ## API 接口
@@ -108,116 +120,105 @@ curl -X POST -H "X-API-Key: edgehub_secret_key" \
 # 返回: {"status":"delivered_via_ws","mode":"ws"}
 ```
 
-## 安装部署
-
-### RK3588 设备端（一键启动）
-
-```bash
-curl -s http://1.13.247.173/edgeagent-full-start-rk3588.sh | sudo bash
-```
-
-### 手动更新 EdgeAgent
-
-```bash
-curl -O http://1.13.247.173/edgeagent-ws-v3.py
-sudo cp /opt/edgeagent/edgeagent.py /opt/edgeagent/edgeagent.py.bak
-sudo cp edgeagent-ws-v3.py /opt/edgeagent/edgeagent.py
-sudo systemctl restart edgeagent
-```
-
-### 服务器端重启 EdgeHub
-
-```bash
-sudo kill -9 <PID>
-cd /opt/edgehub && node src/app.js &
-```
-
-## 调试命令
-
-### 测试 WS 连接
-
-```bash
-curl -s -X POST -H "X-API-Key: edgehub_secret_key" \
-  -d '{"command":"echo TEST","timeout":10}' \
-  "http://1.13.247.173/api/v1/devices/82b2731d58533598/commands"
-```
-
-### 查看命令结果
-
-```bash
-cd /opt/edgehub && node -e "
-const db = new (require('./src/models/database'))('./data/edgehub.db');
-db.getCommandsByDevice('82b2731d58533598', null, 5).then(cs => {
-  cs.forEach(c => console.log(c.command_id, c.status, c.stdout, c.exit_code));
-});
-"
-```
-
 ## 版本历史
 
-### v3.0.2 (2026-05-28) 🎉
+### v4.1 (2026-06-04) - Windows EdgeAgent 大版本更新
+- **psutil 替代 wmic**：解决 Windows 11/Server 2022 上 wmic 已弃用的问题
+- **完整 SysInfo**：CPU/内存/磁盘/运行时间全支持
+- **安装脚本重写**：使用 schtasks 替代 nssm，修复兼容性问题
+- **心跳无阻塞**：使用 `cpu_percent(interval=None)` 无需 sleep
+- **命令类型修复**：`execute_command` 和 `command` 两种消息类型都支持
+
+### v3.0.2 (2026-06-04) - RK3588 EdgeAgent 修复
+- **双进程问题修复**：确保单实例运行
+- **WebSocket 消息处理优化**：命令接收更稳定
+- **systemd 服务优化**：防止重复启动
+
+### v3.0.1 (2026-05-28) 🎉
 - **WireGuard + EdgeAgent 完全打通**
 - RK3588 设备状态: **online**
 - WebSocket 路径修正: `/ws` 而非 `/ws/device`
 - 一键启动脚本: `edgeagent-full-start-rk3588.sh`
 
-### v3.0.1 (2026-05-27)
-- EdgeAgent 完整 sysinfo 上报 (CPU/内存/磁盘/负载/运行时间)
-- 前端 loadDeviceDetail JSON.parse 修复
-- 数据库 updateDeviceStatus 同时更新 last_heartbeat
-
-### v3.0.0 (2026-05-26)
+### v3.0.0 (2026-05-27)
 - WebSocket 原生命令推送
 - 替代 SSH over VPN 方案
 - device_status 定期上报
 
-### v2.x (2026-05-18~25)
-- EdgeHub 基础架构
-- M1-M14 功能实现
+## 已知问题与修复
 
-## 已知问题
+### 2026-06-04 修复：Windows EdgeAgent 问题
 
-1. ~~**设备状态 offline**~~ - ✅ 已解决 (2026-05-28)
-2. **CPU usage 显示 0** - 首次上报时无历史数据，下一个周期恢复正常
+| 问题 | 原因 | 解决方案 |
+|------|------|---------|
+| `wmic` 命令失败 | Windows 11 已弃用 | 使用 psutil 替代 |
+| 安装脚本报错 | `Join-String` PowerShell 5.1 不支持 | 改用 `-join` 拼接 |
+| nssm 下载失败 | C:\ 路径格式问题 | 回退到 schtasks |
+| SysInfo 返回 null | 首次 cpu_percent() 返回累积值 | 启动时初始化，后续无阻塞获取 |
 
-## 经验教训 (2026-05-28)
+### 2026-06-04 修复：RK3588 双进程问题
 
-### 为什么昨晚正常今天不行？
+| 问题 | 原因 | 解决方案 |
+|------|------|---------|
+| 两个 EdgeAgent 进程 | systemd 重复启动或残留进程 | 停止服务，杀掉进程，重新启动 |
+| 命令卡在 pending | 消息处理被两个进程瓜分 | 确保单实例运行 |
 
-1. **服务器重启导致WireGuard配置丢失**
-   - 配置未持久化到/etc/wireguard/
-   - wg-quick up只读取配置文件，重启后需重新加载
+### 排查命令
 
-2. **密钥对不匹配**
-   - 服务器重新生成私钥/公钥对
-   - 但RK3588仍使用旧的服务器公钥
+```bash
+# 检查进程数量（正常应该只有1个）
+ps aux | grep edgeagent
 
-3. **多层面问题叠加**
-   - WireGuard连接问题 → 命令无法下发
-   - WebSocket路径问题 → EdgeAgent注册失败
-   - 配置格式问题 → WireGuard无法启动
-   - 权限问题 → EdgeAgent崩溃
+# 检查服务状态
+systemctl status edgeagent
 
-### 关键教训
+# 查看日志
+tail -30 /opt/edgeagent/logs/edgeagent.log
 
-1. **WireGuard配置必须持久化并开机自启**
-   - 使用`systemctl enable wg-quick@wg0`
-   - 确保/etc/wireguard/wg0.conf存在且正确
+# 重启服务
+sudo systemctl restart edgeagent
+```
 
-2. **密钥对必须同步更新**
-   - 服务器密钥对变更后，所有客户端公钥必须同步更新
+## 经验教训 (2026-06-04)
 
-3. **配置文件写入后必须验证**
-   - 使用cat/tail验证文件内容
-   - 确认无多余字符（特别是`=`和引号）
+### Windows EdgeAgent 适配要点
 
-4. **WebSocket路径必须是/ws而非/ws/device**
-   - 参数通过query string传递
-   - `ws://10.0.0.1:8080/ws?device_id=xxx&api_key=xxx`
+1. **wmic 已弃用**
+   - Windows 11/Server 2022 不再包含 wmic
+   - 必须使用 PowerShell 或 psutil 获取系统信息
 
-5. **权限问题必须提前检查**
-   - 创建必要的目录并设置正确权限
-   - sudo执行启动脚本
+2. **PowerShell 版本兼容性**
+   - `Join-String` 是 PowerShell 7+ 特性
+   - PowerShell 5.1 使用 `-join` 拼接字符串
+
+3. **路径分隔符**
+   - PowerShell 中字符串拼接 `\"` 可能导致问题
+   - 使用单引号或 here-string 更安全
+
+4. **psutil 优于 wmic**
+   - psutil 是跨平台的系统信息库
+   - 无需关心 Windows 版本差异
+
+### RK3588 服务稳定性
+
+1. **单实例运行**
+   - EdgeAgent 必须是单进程
+   - 多进程会导致 WebSocket 消息处理混乱
+
+2. **systemd 抑制重复启动**
+   ```bash
+   sudo systemctl edit edgeagent
+   ```
+   添加：
+   ```ini
+   [Service]
+   RuntimeMaxSec=3600
+   ```
+
+3. **日志监控**
+   - 定期检查日志是否有异常
+   - "SysInfo上报完成" 说明心跳正常
+   - "收到命令" 说明命令推送正常
 
 ## 目录结构
 
@@ -232,16 +233,25 @@ db.getCommandsByDevice('82b2731d58533598', null, 5).then(cs => {
 ├── logs/                       # 日志
 └── data/edgehub.db             # 数据库
 
-/var/www/html/
-├── edgeagent-ws-v3.py          # 设备端Agent
-├── edgeagent-full-start-rk3588.sh  # 一键启动脚本
-└── edgeagent-install.sh        # 安装脚本
+/var/www/html/edgeagent/
+├── edgeagent-ws-v3.py          # RK3588 EdgeAgent (Linux)
+├── edgeagent-win.py            # Windows EdgeAgent
+├── Install-EdgeAgent.ps1       # Windows 一键安装脚本
+└── edgeagent-full-start-rk3588.sh  # RK3588 一键启动脚本
 ```
 
 ## 连接信息
 
-- 服务器: 1.13.247.173
-- API Key: `edgehub_secret_key`
-- 设备ID (RK3588): `82b2731d58533598`
-- WireGuard VPN IP: 10.0.0.3 (RK3588) / 10.0.0.1 (服务器)
-- WebSocket URL: `ws://10.0.0.1:8080/ws?device_id=82b2731d58533598&api_key=edgehub_secret_key`
+| 属性 | 值 |
+|------|-----|
+| 服务器 | 1.13.247.173 |
+| API Key | `edgehub_secret_key` |
+| RK3588 设备ID | `82b2731d58533598` |
+| WEI-PC 设备ID | `82785476b5753520` |
+| WebSocket URL | `ws://1.13.247.173/ws` |
+| Web 面板 | http://1.13.247.173/edgehub-web/ |
+
+## GitHub
+
+- EdgeHub: https://github.com/467718584/edgehub
+- AgentLink: https://github.com/467718584/agentlink
