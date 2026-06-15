@@ -1,15 +1,4 @@
-# EdgeHub-test
-
-**AgentLink框架的实地部署案例**
-
-> 本仓库是**极速科技基于AgentLink框架的实际部署系统**，包含完整的EdgeHub服务端和EdgeAgent客户端代码。
-
-## 🎯 定位说明
-
-| 项目 | 定位 | 性质 |
-|------|------|------|
-| **AgentLink** | 框架代码 | 通用可复刻的开源架构 |
-| **EdgeHub-test** | 实地部署实例 | 极速科技的生产环境 |
+# EdgeHub-test | 实地部署实例 | 极速科技的生产环境
 
 **关系**：EdgeHub-test 是 AgentLink 框架在极速科技的**具体部署实现**。
 
@@ -39,14 +28,15 @@ edgehub-test/
 │   │   ├── services/           # 核心服务
 │   │   │   ├── commandQueueService.js  # 命令队列
 │   │   │   ├── deviceService.js        # 设备服务
-│   │   │   └── execService.js          # 执行服务
+│   │   │   ├── execService.js          # 执行服务
+│   │   │   └── sysinfoPolling.js       # ⭐ Sysinfo定时轮询
 │   │   └── utils/
-│   │       └── ws-server.js    # WebSocket服务 ⭐(已修复命令回环)
+│   │       └── ws-server.js    # WebSocket服务 (支持sysinfo处理)
 │   ├── web/                     # Web管理面板
 │   │   ├── index.html
 │   │   ├── css/style.css
 │   │   └── js/
-│   │       ├── app.js
+│   │       ├── app.js          # (sysinfo展示已更新)
 │   │       ├── api.js
 │   │       └── agents.js
 │   └── package.json
@@ -100,6 +90,7 @@ python agent.py
 | API Key | `edgehub_secret_key` |
 | WebSocket端口 | 8080 |
 | 心跳间隔 | 30秒 |
+| Sysinfo轮询 | 60秒 |
 
 ## 📊 功能状态
 
@@ -107,10 +98,38 @@ python agent.py
 |------|------|------|
 | 设备注册 | ✅ | M1-M4完成 |
 | 命令下发 | ✅ | M5-M7完成，WebSocket闭环验证 |
-| 心跳监控 | ✅ | M4完成 |
+| 心跳监控 | ✅ | M4完成，TCP pong机制 |
 | WebSocket事件 | ✅ | M8完成 |
 | Python EdgeAgent | ✅ | M9完成 |
 | 多智能体拓扑 | ✅ | M15完成 |
+| **Sysinfo轮询** | ✅ | **2026-06-15新增** |
+| **前端sysinfo展示** | ✅ | **2026-06-15更新** |
+
+## 🖥️ Sysinfo轮询功能 (2026-06-15)
+
+### 功能说明
+- 每60秒自动向所有在线设备发送`systeminfo`(Windows)或`/proc/cpuinfo`(Linux)命令
+- 自动解析系统信息并更新数据库
+- 前端Web面板实时展示CPU型号、核心数、内存使用率
+
+### 数据格式
+```json
+{
+  "cpu": { "model": "Intel64 Family 6 Model 85 Stepping 7 GenuineIntel", "cores": 2, "usage": 0 },
+  "memory": { "total": 65193, "free": 55642, "percent": 15 },
+  "platform": "Windows",
+  "python": "-",
+  "uptime": 452761
+}
+```
+
+### 相关文件
+| 文件 | 修改内容 |
+|------|---------|
+| `server/src/services/sysinfoPolling.js` | 定时轮询服务 |
+| `server/src/utils/ws-server.js` | 添加handleSysinfoResult调用 |
+| `server/src/models/database.js` | 添加updateDeviceSysinfo方法 |
+| `server/web/js/app.js` | 前端sysinfo展示格式更新 |
 
 ## 🔗 相关链接
 
@@ -122,6 +141,6 @@ python agent.py
 
 ---
 
-**部署版本**: EdgeHub v1.0.0 + EdgeAgent v4.1  
+**部署版本**: EdgeHub v1.1.0 + EdgeAgent v4.1  
 **最后更新**: 2026-06-15  
 **维护者**: 极速科技
