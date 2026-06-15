@@ -1,0 +1,19 @@
+{
+  "edgehub_url": "http://1.13.247.173:8080",
+  "device_id": "rk3588-001",
+  "device_name": "RK3588 Device",
+  "ssh": {
+    "host": "127.0.0.1",
+    "port": 22,
+    "username": "ubuntu",
+    "private_key_path": "/home/ubuntu/.ssh/id_rsa"
+  },
+  "heartbeat_interval": 30,
+  "frp": {
+    "server_addr": "1.13.247.173",
+    "server_port": 7000,
+    "token": "edgehub_secret_token",
+    "local_port": 22,
+    "remote_port": 10001
+  }
+}
