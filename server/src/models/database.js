@@ -194,7 +194,7 @@ class Database {
     return new Promise((resolve, reject) => {
       this.db.all('SELECT * FROM devices ORDER BY registered_at DESC', (err, rows) => {
         if (err) reject(err);
-        else resolve(rows);
+        else resolve({ commands: rows, count: rows.length });
       });
     });
   }
@@ -229,6 +229,13 @@ class Database {
     return this.updateDevice(deviceId, { status, last_heartbeat: new Date().toISOString() });
   }
   
+  
+  updateDeviceSysinfo(deviceId, sysinfo) {
+    return this.updateDevice(deviceId, { 
+      sysinfo: typeof sysinfo === 'string' ? sysinfo : JSON.stringify(sysinfo), 
+      last_heartbeat: new Date().toISOString() 
+    });
+  }
   updateHeartbeat(deviceId, heartbeat) {
     return new Promise((resolve, reject) => {
       let sql = `UPDATE devices SET 
@@ -359,7 +366,7 @@ class Database {
     return new Promise((resolve, reject) => {
       this.db.all('SELECT * FROM projects WHERE device_id = ? ORDER BY last_activity DESC', [deviceId], (err, rows) => {
         if (err) reject(err);
-        else resolve(rows);
+        else resolve({ commands: rows, count: rows.length });
       });
     });
   }
@@ -373,7 +380,7 @@ class Database {
         ORDER BY p.last_activity DESC
       `, (err, rows) => {
         if (err) reject(err);
-        else resolve(rows);
+        else resolve({ commands: rows, count: rows.length });
       });
     });
   }
@@ -475,7 +482,7 @@ class Database {
         LIMIT ?
       `, [projectId, limit], (err, rows) => {
         if (err) reject(err);
-        else resolve(rows);
+        else resolve({ commands: rows, count: rows.length });
       });
     });
   }
@@ -491,7 +498,7 @@ class Database {
         LIMIT ?
       `, [deviceId, limit], (err, rows) => {
         if (err) reject(err);
-        else resolve(rows);
+        else resolve({ commands: rows, count: rows.length });
       });
     });
   }
@@ -507,7 +514,7 @@ class Database {
         LIMIT ?
       `, [limit], (err, rows) => {
         if (err) reject(err);
-        else resolve(rows);
+        else resolve({ commands: rows, count: rows.length });
       });
     });
   }
@@ -556,7 +563,7 @@ class Database {
         ORDER BY timestamp DESC
       `, [projectId], (err, rows) => {
         if (err) reject(err);
-        else resolve(rows);
+        else resolve({ commands: rows, count: rows.length });
       });
     });
   }
@@ -676,7 +683,7 @@ class Database {
       
       this.db.all(sql, params, (err, rows) => {
         if (err) reject(err);
-        else resolve(rows);
+        else resolve({ commands: rows, count: rows.length });
       });
     });
   }
@@ -691,7 +698,7 @@ class Database {
         LIMIT ?
       `, [deviceId, lastCommandId, limit], (err, rows) => {
         if (err) reject(err);
-        else resolve(rows);
+        else resolve({ commands: rows, count: rows.length });
       });
     });
   }
