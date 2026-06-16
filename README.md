@@ -21,7 +21,7 @@ edgehub-test/
 │   │   ├── app.js              # 主入口
 │   │   ├── routes/             # REST API 路由
 │   │   │   ├── devices.js      # 设备注册/管理
-│   │   │   ├── commands.js     # 命令下发
+│   │   │   ├── commands.js     # 命令下发 (含设备绑定校验)
 │   │   │   ├── agents.js       # 智能体管理
 │   │   │   ├── projects.js     # 项目追踪
 │   │   │   └── exec.js         # 执行服务
@@ -29,14 +29,16 @@ edgehub-test/
 │   │   │   ├── commandQueueService.js  # 命令队列
 │   │   │   ├── deviceService.js        # 设备服务
 │   │   │   ├── execService.js          # 执行服务
-│   │   │   └── sysinfoPolling.js       # ⭐ Sysinfo定时轮询
+│   │   │   └── sysinfoPolling.js       # Sysinfo定时轮询
+│   │   ├── middlewares/
+│   │   │   └── auth.js         # ⭐ API Key认证 + 设备绑定校验
 │   │   └── utils/
-│   │       └── ws-server.js    # WebSocket服务 (支持sysinfo处理)
+│   │       └── ws-server.js    # WebSocket服务
 │   ├── web/                     # Web管理面板
 │   │   ├── index.html
 │   │   ├── css/style.css
 │   │   └── js/
-│   │       ├── app.js          # (sysinfo展示已更新)
+│   │       ├── app.js          # 前端路由+sysinfo展示
 │   │       ├── api.js
 │   │       └── agents.js
 │   └── package.json
@@ -55,6 +57,7 @@ edgehub-test/
 ├── Install-EdgeAgent.ps1        # Windows一键安装脚本
 ├── restart-weipc-agent.bat      # WEI-PC重启脚本
 ├── EDGEHUB-DEPLOYMENT.md       # 部署案例详细文档
+├── CHANGELOG.md                # ⭐ 版本更新记录
 └── README.md
 ```
 
@@ -83,14 +86,61 @@ python agent.py
 .\Install-EdgeAgent.ps1
 ```
 
-## 🔑 关键配置
+## 🔑 API Key体系
 
-| 配置项 | 值 |
-|--------|-----|
-| API Key | `edgehub_secret_key` |
-| WebSocket端口 | 8080 |
-| 心跳间隔 | 30秒 |
-| Sysinfo轮询 | 60秒 |
+### 两种Key类型
+
+| Key类型 | 格式 | 权限范围 |
+|---------|------|----------|
+| **管理员Key** | `edgehub_secret_key` | 可操作任意设备 |
+| **Agent Key** | `eh_key_{agent_id}_xxxxxx` | 只能操作绑定项目关联的设备 |
+
+### 权限校验流程
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     API请求                                  │
+│         -H "X-API-Key: eh_key_ivp_agent_001_xxx"            │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  auth.js 认证中间件                                          │
+│  1. 检查是否是管理员Key → 直接通过                          │
+│  2. 检查是否是Agent Key → 查询数据库验证                    │
+│  3. 都无效 → 返回401                                        │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  commands.js 设备绑定校验                                   │
+│  如果是普通Agent:                                            │
+│    checkDeviceBond(agent_id, device_id)                      │
+│    → 查询agent_projects + project_devices                   │
+│    → 设备未绑定 → 返回403 DEVICE_NOT_BINDED                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Agent Key生成记录
+
+| Agent | API Key | 可管辖设备 |
+|-------|---------|-----------|
+| ivp-agent-001 | `eh_key_ivp_agent_001_6747f782...` | WEI-PC |
+| jisu-admin | `eh_key_jisu_admin_04352f81...` | RK3588 |
+
+### 使用示例
+
+```bash
+# 管理员：可给任意设备下发命令
+curl -X POST http://1.13.247.173/api/v1/devices/82b2731d58533598/commands \
+  -H "X-API-Key: edgehub_secret_key" \
+  -d '{"command": "ls -la"}'
+
+# Agent：只能给已绑定设备下发命令
+curl -X POST http://1.13.247.173/api/v1/devices/82785476b5753520/commands \
+  -H "X-API-Key: eh_key_ivp_agent_001_6747f7824d09c6d091128b360fa43831" \
+  -d '{"command": "python detect.py"}'
+```
 
 ## 📊 功能状态
 
@@ -101,11 +151,16 @@ python agent.py
 | 心跳监控 | ✅ | M4完成，TCP pong机制 |
 | WebSocket事件 | ✅ | M8完成 |
 | Python EdgeAgent | ✅ | M9完成 |
+| JavaScript SDK | ✅ | M10完成 |
+| OpenClaw Skill | ✅ | M11完成 |
+| MCP Server | ✅ | M12完成 |
+| OpenAPI文档 | ✅ | M13完成 |
+| 自动化测试 | ✅ | M14完成 |
 | 多智能体拓扑 | ✅ | M15完成 |
-| **Sysinfo轮询** | ✅ | **2026-06-15新增** |
-| **前端sysinfo展示** | ✅ | **2026-06-15更新** |
+| Sysinfo轮询 | ✅ | 每60秒自动采集 |
+| **Agent API Key权限体系** | ✅ | **v1.2.0新增** |
 
-## 🖥️ Sysinfo轮询功能 (2026-06-15)
+## 🖥️ Sysinfo轮询功能
 
 ### 功能说明
 - 每60秒自动向所有在线设备发送`systeminfo`(Windows)或`/proc/cpuinfo`(Linux)命令
@@ -123,14 +178,6 @@ python agent.py
 }
 ```
 
-### 相关文件
-| 文件 | 修改内容 |
-|------|---------|
-| `server/src/services/sysinfoPolling.js` | 定时轮询服务 |
-| `server/src/utils/ws-server.js` | 添加handleSysinfoResult调用 |
-| `server/src/models/database.js` | 添加updateDeviceSysinfo方法 |
-| `server/web/js/app.js` | 前端sysinfo展示格式更新 |
-
 ## 🔗 相关链接
 
 | 资源 | 地址 |
@@ -138,9 +185,10 @@ python agent.py
 | 框架仓库 | https://github.com/467718584/agentlink |
 | 主站 | http://speedonline.online |
 | Web面板 | http://1.13.247.173/edgehub-web/ |
+| 接入说明书 | http://1.13.247.173/edgehub-agent-manual.html |
 
 ---
 
-**部署版本**: EdgeHub v1.1.0 + EdgeAgent v4.1  
-**最后更新**: 2026-06-15  
+**部署版本**: EdgeHub v1.2.0 + EdgeAgent v4.1  
+**最后更新**: 2026-06-16  
 **维护者**: 极速科技

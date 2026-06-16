@@ -20,6 +20,7 @@ const { router: commandsRouter, setCommandQueueService } = require('./routes/com
 const projectsRouter = require('./routes/projects');
 const projectEnhance = require('./routes/projectEnhance');
 const { router: agentsRouter, setAgentDatabase } = require('./routes/agents');
+const { setDatabase: setAuthDatabase } = require('./middlewares/auth');
 
 // 初始化日志
 const logger = new Logger(config.log.path);
@@ -56,6 +57,7 @@ setFileService(fileService);
 setDatabase(db);
 setCommandQueueService(commandQueueService);
 setAgentDatabase(db);
+setAuthDatabase(db);
 
 // 创建Express应用
 const app = express();
@@ -171,6 +173,9 @@ const server = app.listen(config.port, '0.0.0.0', () => {
 
 // Initialize WebSocket
 initWebSocket(server);
+// Start sysinfo polling for all online devices
+const { startSysinfoPolling } = require('./services/sysinfoPolling');
+startSysinfoPolling(60000); // 1 minute
 
 // 优雅退出
 process.on('SIGTERM', () => {

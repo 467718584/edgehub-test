@@ -11,7 +11,7 @@
 const express = require('express');
 const router = express.Router();
 const CommandQueueService = require('../services/commandQueueService');
-const { authMiddleware } = require('../middlewares/auth');
+const { authMiddleware, checkDeviceBond } = require('../middlewares/auth');
 
 // 服务实例（通过app.js注入）
 let commandQueueService;
@@ -58,6 +58,23 @@ router.post('/:deviceId/commands', authMiddleware, async (req, res, next) => {
   try {
     const { deviceId } = req.params;
     const { command, priority, timeout_ms, callback_url, callback_headers } = req.body;
+    
+    // ========== 设备绑定校验（普通Agent） ==========
+    // 如果是普通Agent（非管理员），检查设备绑定
+    if (!req.isAdmin && req.agent) {
+      const bonded = await checkDeviceBond(req.agent.agent_id, deviceId);
+      if (!bonded) {
+        return res.status(403).json({
+          success: false,
+          error: {
+            code: 'DEVICE_NOT_BINDED',
+            message: '该设备未绑定到此智能体，无权下发命令'
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+    // ============================================
     
     // 参数校验
     if (!command) {
