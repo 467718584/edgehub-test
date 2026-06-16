@@ -189,6 +189,6 @@ curl -X POST http://1.13.247.173/api/v1/devices/82785476b5753520/commands \
 
 ---
 
-**部署版本**: EdgeHub v1.2.1 + EdgeAgent v4.1  
+**部署版本**: EdgeHub v1.2.2 + EdgeAgent v4.1.0  
 **最后更新**: 2026-06-16  
 **维护者**: 极速科技

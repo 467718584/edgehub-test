@@ -247,10 +247,11 @@ class WSClient:
         self.running = False
     
     def send(self, data):
-        if self.ws and self.ws.sock and self.ws.sock.connected:
+        try:
             self.ws.send(json.dumps(data))
             return True
-        return False
+        except Exception:
+            return False
     
     def close(self):
         self.running = False
@@ -419,8 +420,8 @@ class EdgeAgent:
         log(f"[CMD] Done: exit={result['exit_code']}, duration={result['duration_ms']}ms")
         
         # 通过WebSocket发送结果
-        if self.ws and self.ws.sock and self.ws.sock.connected:
-            self.ws.send({
+        try:
+            self.ws.send(json.dumps({
                 'type': 'command_result',
                 'command_id': command_id,
                 'success': result['success'],
@@ -428,8 +429,10 @@ class EdgeAgent:
                 'stderr': result['stderr'],
                 'exit_code': result['exit_code'],
                 'duration_ms': result['duration_ms']
-            })
-    
+            }))
+        except Exception as e:
+            log(f"[WS] Send result failed: {e}", "ERROR")
+
     def stop(self):
         self.running = False
         if self.ws:

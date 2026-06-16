@@ -202,10 +202,9 @@ function renderDevices() {
         </div>
         ${sysinfo ? `
         <div class="device-resources">
-          <div class="resource-bar">
+          <div class="resource-bar" style="font-size:11px;">
             <span class="resource-label">CPU</span>
-            <div class="progress"><div class="progress-fill cpu" style="width:${sysinfo.cpu?.usage || 0}%"></div></div>
-            <span class="resource-value">${sysinfo.cpu?.usage || 0}%</span>
+            <span class="resource-value">${sysinfo.cpu?.model || '-'} (${sysinfo.cpu?.cores || 0}核)</span>
           </div>
           <div class="resource-bar">
             <span class="resource-label">内存</span>

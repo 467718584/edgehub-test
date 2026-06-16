@@ -1,6 +1,8 @@
 const WebSocket = require('ws');
+const { handleSysinfoResult } = require("../services/sysinfoPolling");
 
 const deviceClients = new Map();
+global.deviceClients = deviceClients;
 const agentClients = new Set();
 
 function initWebSocket(server) {
@@ -102,6 +104,7 @@ function initWebSocket(server) {
             }).catch(e => console.error('[WS] Failed to update command result:', e.message));
           }
           broadcastToAgents({ type: 'command_result', device_id: deviceId, ...msg });
+          handleSysinfoResult({...msg, deviceId});
         } else if (msg.type === 'device_status') {
           broadcastToAgents({ type: 'device_status_update', device_id: deviceId, ...msg });
         }
@@ -110,7 +113,7 @@ function initWebSocket(server) {
       }
     });
 
-    ws.on('pong', () => { ws.isAlive = true; });
+    ws.on('pong', () => { ws.isAlive = true; if (deviceId && global.db) { global.db.updateHeartbeat(deviceId).catch(() => {}); } });
     ws.on('close', () => {
       console.log('[WS] Device disconnected:', deviceId);
       if (deviceId) {

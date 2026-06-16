@@ -2,6 +2,22 @@
 
 所有版本更新记录。极速科技生产环境部署实例。
 
+## [v1.2.2] - 2026-06-16
+
+### 🐛 Bug修复
+
+#### EdgeAgent v4.1.0 - WebSocket响应Bug修复
+- **问题**：`AttributeError: 'WSClient' object has no attribute 'sock'`
+- **原因**：异步线程中访问`self.ws.sock`，但`WebSocketApp`对象不暴露`sock`属性
+- **修复**：移除`sock`检查，直接调用`send()`方法
+
+#### EdgeAgent v4.1.0 - 缩进错误修复
+- **问题**：`IndentationError: unindent does not match any outer indentation level`
+- **原因**：sed替换时破坏了代码结构
+- **修复**：修复`send()`方法的try-except结构
+
+---
+
 ## [v1.2.1] - 2026-06-16
 
 ### 🐛 Bug修复
