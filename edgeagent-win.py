@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-EdgeHub EdgeAgent v4.0 for Windows - WebSocket版本
+EdgeHub EdgeAgent v4.1 for Windows - WebSocket版本
 使用WebSocket与EdgeHub通信
+
+v4.1 更新：
+- 异步命令执行：命令在独立线程中执行，不阻塞WebSocket主线程
+- 交互式命令检测：自动拒绝可能卡死的交互式命令
 """
 import os, sys, time, json, socket, platform, signal, subprocess, hashlib, urllib.request, re, threading, websocket, psutil
 from datetime import datetime
 from urllib.error import URLError, HTTPError
 import argparse
+from queue import Queue
 
-VERSION = "4.0.0"
+VERSION = "4.1.0"
 AGENT_DIR = "C:\\EdgeAgent"
 CONFIG_FILE = os.path.join(AGENT_DIR, "config.json")
 LOG_FILE = os.path.join(AGENT_DIR, "logs", "edgeagent.log")
@@ -289,6 +294,13 @@ class EdgeAgent:
         self.executor = CommandExecutor()
         self.running = False
         self.ws = None
+        # 交互式命令黑名单
+        self._interactive_commands = ['copy con', 'more', 'edlin', 'edit', 'qbasic', 'debug']
+    
+    def _is_interactive_command(self, command):
+        """检测交互式命令（会等待用户输入，不适合自动化）"""
+        cmd_lower = command.lower()
+        return any(dangerous in cmd_lower for dangerous in self._interactive_commands)
     
     def start(self):
         self.running = True
@@ -371,27 +383,52 @@ class EdgeAgent:
             log(f"[WS] Unknown message type: {msg_type}")
     
     def handle_command(self, cmd):
-        """执行命令"""
+        """执行命令（异步，不阻塞WebSocket主线程）"""
         command_id = cmd.get('command_id')
         command = cmd.get('command', '')
         timeout = cmd.get('timeout_ms', 30000)
         
         log(f"[CMD] {command_id}: {command[:80]}...")
         
+        # 检测交互式命令
+        if self._is_interactive_command(command):
+            log(f"[CMD] 拒绝交互式命令: {command[:50]}...", "WARN")
+            # 立即返回错误，不执行
+            self.ws.send({
+                'type': 'command_result',
+                'command_id': command_id,
+                'success': False,
+                'stdout': '',
+                'stderr': f'交互式命令可能被卡死，已拒绝执行: {command[:50]}',
+                'exit_code': -1,
+                'duration_ms': 0
+            })
+            return
+        
+        # 异步执行命令，不阻塞主线程
+        thread = threading.Thread(
+            target=self._execute_async,
+            args=(command_id, command, timeout)
+        )
+        thread.start()
+    
+    def _execute_async(self, command_id, command, timeout):
+        """异步执行命令（在线程中）"""
         result = self.executor.execute(command, timeout)
         
         log(f"[CMD] Done: exit={result['exit_code']}, duration={result['duration_ms']}ms")
         
         # 通过WebSocket发送结果
-        self.ws.send({
-            'type': 'command_result',
-            'command_id': command_id,
-            'success': result['success'],
-            'stdout': result['stdout'],
-            'stderr': result['stderr'],
-            'exit_code': result['exit_code'],
-            'duration_ms': result['duration_ms']
-        })
+        if self.ws and self.ws.sock and self.ws.sock.connected:
+            self.ws.send({
+                'type': 'command_result',
+                'command_id': command_id,
+                'success': result['success'],
+                'stdout': result['stdout'],
+                'stderr': result['stderr'],
+                'exit_code': result['exit_code'],
+                'duration_ms': result['duration_ms']
+            })
     
     def stop(self):
         self.running = False

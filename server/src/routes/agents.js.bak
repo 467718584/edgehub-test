@@ -1,0 +1,121 @@
+const express = require('express');
+const router = express.Router();
+const { authMiddleware } = require('../middlewares/auth');
+
+// We need to access the database through deviceService since that's what's injected
+let db;
+
+function setAgentDatabase(database) {
+  db = database;
+}
+
+// Get all agents with their projects and devices
+router.get('/', authMiddleware, async (req, res, next) => {
+  try {
+    // Get all agents using raw SQL through the db instance
+    const agents = await new Promise((resolve, reject) => {
+      db.db.all('SELECT * FROM agents ORDER BY created_at DESC', (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      });
+    });
+    
+    const result = [];
+    for (const agent of agents) {
+      const projects = await new Promise((resolve, reject) => {
+        db.db.all(`
+          SELECT p.*, ap.role 
+          FROM agent_projects ap 
+          JOIN projects p ON ap.project_id = p.id 
+          WHERE ap.agent_id = ?
+        `, [agent.agent_id], (err, rows) => {
+          if (err) reject(err);
+          else resolve(rows);
+        });
+      });
+      
+      const devices = await new Promise((resolve, reject) => {
+        db.db.all(`
+          SELECT DISTINCT d.*
+          FROM project_devices pd 
+          JOIN devices d ON pd.device_id = d.device_id 
+          WHERE pd.project_id IN (SELECT project_id FROM agent_projects WHERE agent_id = ?)
+        `, [agent.agent_id], (err, rows) => {
+          if (err) reject(err);
+          else resolve(rows);
+        });
+      });
+      
+      result.push({
+        ...agent,
+        projects: projects || [],
+        devices: devices || []
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: result,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get single agent
+router.get('/:agentId', authMiddleware, async (req, res, next) => {
+  try {
+    const agent = await new Promise((resolve, reject) => {
+      db.db.get('SELECT * FROM agents WHERE agent_id = ?', [req.params.agentId], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+    
+    if (!agent) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Agent不存在' }
+      });
+    }
+    
+    const projects = await new Promise((resolve, reject) => {
+      db.db.all(`
+        SELECT p.*, ap.role 
+        FROM agent_projects ap 
+        JOIN projects p ON ap.project_id = p.id 
+        WHERE ap.agent_id = ?
+      `, [agent.agent_id], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      });
+    });
+    
+    const devices = await new Promise((resolve, reject) => {
+      db.db.all(`
+        SELECT DISTINCT d.*
+        FROM project_devices pd 
+        JOIN devices d ON pd.device_id = d.device_id 
+        WHERE pd.project_id IN (SELECT project_id FROM agent_projects WHERE agent_id = ?)
+      `, [agent.agent_id], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      });
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        ...agent,
+        projects: projects || [],
+        devices: devices || []
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+module.exports = { router, setAgentDatabase };

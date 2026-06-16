@@ -1,0 +1,313 @@
+class CommandQueueService {
+  constructor(db, sshPool) {
+    this.db = db;
+    this.sshPool = sshPool;
+  }
+  
+  // ========== M5: 命令下发 ==========
+  
+  /**
+   * 下发命令到指定设备
+   * @param {string} deviceId - 设备ID
+   * @param {object} cmd - 命令配置 {command, priority, timeout_ms, callback_url, callback_headers}
+   */
+  async enqueueCommand(deviceId, cmd) {
+    // 检查设备是否存在
+    const device = await this.db.getDevice(deviceId);
+    if (!device) {
+      const error = new Error('设备不存在');
+      error.statusCode = 404;
+      error.code = 'DEVICE_NOT_FOUND';
+      throw error;
+    }
+    
+    // 生成唯一命令ID (使用时间戳+随机数)
+    const commandId = `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    
+    // 创建命令记录
+    const command = await this.db.createCommand({
+      command_id: commandId,
+      device_id: deviceId,
+      command: cmd.command,
+      priority: cmd.priority || 5,
+      timeout_ms: cmd.timeout_ms || 30000,
+      callback_url: cmd.callback_url,
+      callback_headers: cmd.callback_headers
+    });
+    
+    return {
+      success: true,
+      command_id: commandId,
+      status: 'pending',
+      created_at: command.created_at
+    };
+  }
+  
+  // ========== M6: 命令拉取（EdgeAgent调用） ==========
+  
+  /**
+   * 设备拉取待执行命令（增量拉取）
+   * @param {string} deviceId - 设备ID
+   * @param {number} lastCommandId - 最后执行的命令ID（用于增量拉取）
+   * @param {number} limit - 每次拉取数量上限
+   */
+  async fetchCommands(deviceId, lastCommandId = 0, limit = 10) {
+    // 检查设备是否存在
+    const device = await this.db.getDevice(deviceId);
+    if (!device) {
+      const error = new Error('设备不存在');
+      error.statusCode = 404;
+      error.code = 'DEVICE_NOT_FOUND';
+      throw error;
+    }
+    
+    // 增量拉取待执行命令
+    const commands = await this.db.fetchPendingCommands(deviceId, lastCommandId, limit);
+    
+    // 更新偏移量
+    if (commands.length > 0) {
+      const maxId = Math.max(...commands.map(c => c.id));
+      await this.db.updateCommandOffset(deviceId, maxId);
+    }
+    
+    // 标记命令为running
+    for (const cmd of commands) {
+      await this.db.updateCommandStatus(cmd.command_id, 'running');
+    }
+    
+    return {
+      success: true,
+      commands: commands.map(c => ({
+        command_id: c.command_id,
+        command: c.command,
+        timeout_ms: c.timeout_ms,
+        priority: c.priority,
+        created_at: c.created_at
+      })),
+      count: commands.length,
+      next_offset: commands.length > 0 ? Math.max(...commands.map(c => c.id)) : lastCommandId
+    };
+  }
+  
+  // ========== M7: 命令执行+结果回调 ==========
+  
+  /**
+   * 在设备上执行命令（由EdgeAgent调用本地执行后回调）
+   * @param {string} deviceId - 设备ID
+   * @param {string} commandId - 命令ID
+   * @param {object} result - 执行结果 {stdout, stderr, exit_code}
+   */
+  async reportCommandResult(deviceId, commandId, result) {
+    // 获取命令信息
+    const command = await this.db.getCommand(commandId);
+    
+    if (!command) {
+      const error = new Error('命令不存在');
+      error.statusCode = 404;
+      error.code = 'COMMAND_NOT_FOUND';
+      throw error;
+    }
+    
+    if (command.device_id !== deviceId) {
+      const error = new Error('命令不属于该设备');
+      error.statusCode = 403;
+      error.code = 'COMMAND_DEVICE_MISMATCH';
+      throw error;
+    }
+    
+    // 确定状态
+    const status = result.exit_code === 0 ? 'completed' : 'failed';
+    
+    // 更新命令状态和结果
+    await this.db.updateCommandStatus(commandId, status, {
+      stdout: result.stdout || '',
+      stderr: result.stderr || '',
+      exit_code: result.exit_code || -1,
+      result: { duration_ms: result.duration_ms }
+    });
+    
+    // 触发回调
+    if (command.callback_url) {
+      this.triggerCallback(command.callback_url, {
+        command_id: commandId,
+        device_id: deviceId,
+        status,
+        stdout: result.stdout || '',
+        stderr: result.stderr || '',
+        exit_code: result.exit_code,
+        completed_at: new Date().toISOString()
+      }, command.callback_headers ? JSON.parse(command.callback_headers) : {});
+    }
+    
+    return {
+      success: true,
+      command_id: commandId,
+      status
+    };
+  }
+  
+  /**
+   * 通过SSH在设备上直接执行命令并回调
+   * @param {string} deviceId - 设备ID
+   * @param {string} commandId - 命令ID
+   * @param {number} timeout - 超时时间
+   */
+  async executeCommand(deviceId, commandId, timeout = 30000) {
+    const command = await this.db.getCommand(commandId);
+    
+    if (!command) {
+      const error = new Error('命令不存在');
+      error.statusCode = 404;
+      error.code = 'COMMAND_NOT_FOUND';
+      throw error;
+    }
+    
+    const device = await this.db.getDevice(deviceId);
+    
+    if (!device || device.status !== 'online') {
+      const error = new Error('设备不在线');
+      error.statusCode = 503;
+      error.code = 'DEVICE_OFFLINE';
+      throw error;
+    }
+    
+    try {
+      const startTime = Date.now();
+      const result = await this.sshPool.execCommand(
+        deviceId,
+        device.vpn_ip,
+        22,
+        command.command,
+        timeout
+      );
+      const duration = Date.now() - startTime;
+      
+      return await this.reportCommandResult(deviceId, commandId, {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exit_code: result.exitCode,
+        duration_ms: duration
+      });
+    } catch (err) {
+      // 执行失败，报告失败状态
+      return await this.reportCommandResult(deviceId, commandId, {
+        stdout: '',
+        stderr: err.message,
+        exit_code: -1,
+        duration_ms: 0
+      });
+    }
+  }
+  
+  /**
+   * 触发Webhook回调
+   */
+  triggerCallback(url, data, headers = {}) {
+    try {
+      const urlObj = new URL(url);
+      const isHttps = urlObj.protocol === 'https:';
+      const client = isHttps ? https : http;
+      
+      const postData = JSON.stringify(data);
+      
+      const options = {
+        hostname: urlObj.hostname,
+        port: urlObj.port || (isHttps ? 443 : 80),
+        path: urlObj.pathname + urlObj.search,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData),
+          ...headers
+        },
+        timeout: 10000
+      };
+      
+      const req = client.request(options, (res) => {
+        console.log(`Webhook回调完成: ${url} - 状态码: ${res.statusCode}`);
+      });
+      
+      req.on('error', (err) => {
+        console.error(`Webhook回调失败: ${url} - ${err.message}`);
+      });
+      
+      req.write(postData);
+      req.end();
+    } catch (err) {
+      console.error(`Webhook回调异常: ${url} - ${err.message}`);
+    }
+  }
+  
+  // ========== 命令管理 ==========
+  
+  /**
+   * 获取命令详情
+   */
+  async getCommand(commandId) {
+    const command = await this.db.getCommand(commandId);
+    
+    if (!command) {
+      const error = new Error('命令不存在');
+      error.statusCode = 404;
+      error.code = 'COMMAND_NOT_FOUND';
+      throw error;
+    }
+    
+    return {
+      success: true,
+      data: command
+    };
+  }
+  
+  /**
+   * 获取设备的命令列表
+   */
+  async getCommands(deviceId, options = {}) {
+    const commands = await this.db.getCommandsByDevice(deviceId, options);
+    
+    return {
+      success: true,
+      commands,
+      count: commands.length
+    };
+  }
+  
+  /**
+   * 取消待执行的命令
+   */
+  async cancelCommand(commandId) {
+    const result = await this.db.cancelCommand(commandId);
+    
+    return {
+      success: true,
+      cancelled: result.cancelled,
+      message: result.cancelled ? '命令已取消' : '命令无法取消（可能已执行）'
+    };
+  }
+  
+  /**
+   * 删除命令记录
+   */
+  async deleteCommand(commandId) {
+    const result = await this.db.deleteCommand(commandId);
+    
+    return {
+      success: true,
+      deleted: result.deleted > 0
+    };
+  }
+  
+  /**
+   * 获取命令统计
+   */
+  async getStats(deviceId) {
+    const stats = await this.db.getCommandStats(deviceId);
+    
+    return {
+      success: true,
+      data: stats
+    };
+  }
+}
+
+module.exports = CommandQueueService;

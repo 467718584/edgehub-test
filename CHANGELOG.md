@@ -2,6 +2,47 @@
 
 所有版本更新记录。极速科技生产环境部署实例。
 
+## [v1.2.1] - 2026-06-16
+
+### 🐛 Bug修复
+
+#### EdgeAgent v4.1 - 异步命令执行修复
+- **文件**：`edgeagent-win.py`
+- **问题**：交互式命令（如`copy con`）会导致EdgeAgent卡死
+- **原因**：`handle_command()`在WebSocket主线程中执行命令，主线程阻塞导致心跳无法发送
+- **修复**：
+  1. **异步执行**：命令在独立线程中执行，不阻塞WebSocket主线程
+  2. **交互式命令检测**：自动拒绝`copy con`、`more`、`edlin`、`edit`等交互式命令
+
+- **核心代码变更**：
+  ```python
+  def handle_command(self, cmd):
+      # 检测交互式命令
+      if self._is_interactive_command(command):
+          # 拒绝执行，返回错误
+          return
+      # 异步执行，不阻塞主线程
+      thread = threading.Thread(target=self._execute_async, args=(...))
+      thread.start()
+  ```
+
+- **交互式命令黑名单**：
+  - `copy con` - 等待键盘输入
+  - `more` - 分页显示等待回车
+  - `edlin` - 行编辑器
+  - `edit` - DOS编辑器
+  - `qbasic` - QBasic解释器
+  - `debug` - 调试工具
+
+### 📊 功能状态
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| 异步命令执行 | ✅ | v4.1新增 |
+| 交互式命令检测 | ✅ | v4.1新增 |
+
+---
+
 ## [v1.2.0] - 2026-06-16
 
 ### 🆕 新增功能

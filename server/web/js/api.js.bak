@@ -1,0 +1,115 @@
+/**
+ * EdgeHub API Client
+ */
+
+const API_BASE = '';  // 同源，API通过代理
+
+const api = {
+  // 通用请求方法
+  async request(method, path, data = null) {
+    const options = {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': this.getApiKey()
+      }
+    };
+    
+    if (data && method !== 'GET') {
+      options.body = JSON.stringify(data);
+    }
+    
+    try {
+      const response = await fetch(API_BASE + path, options);
+      const result = await response.json();
+      
+      if (!response.ok && !result.success) {
+        throw new Error(result.error?.message || 'API Error');
+      }
+      
+      return result;
+    } catch (error) {
+      console.error('API Error:', error);
+      throw error;
+    }
+  },
+  
+  getApiKey() {
+    return localStorage.getItem('edgehub_api_key') || 'edgehub_secret_key';
+  },
+  
+  setApiKey(key) {
+    localStorage.setItem('edgehub_api_key', key);
+  },
+  
+  // ========== 设备相关 ==========
+  
+  async getDevices() {
+    return this.request('GET', '/api/v1/devices');
+  },
+  
+  async getDevice(deviceId) {
+    return this.request('GET', `/api/v1/devices/${deviceId}`);
+  },
+  
+  async getDeviceProjects(deviceId) {
+    return this.request('GET', `/api/v1/devices/${deviceId}/projects`);
+  },
+  
+  async getDeviceLogs(deviceId, limit = 20) {
+    return this.request('GET', `/api/v1/devices/${deviceId}/logs/recent?limit=${limit}`);
+  },
+  
+  // ========== 项目相关 ==========
+  
+  async getProjects() {
+    return this.request('GET', '/api/v1/projects');
+  },
+  
+  async getProject(projectId) {
+    return this.request('GET', `/api/v1/projects/${projectId}`);
+  },
+  
+  async createProject(deviceId, projectData) {
+    return this.request('POST', `/api/v1/devices/${deviceId}/projects`, projectData);
+  },
+  
+  async updateProject(projectId, updates) {
+    return this.request('PUT', `/api/v1/projects/${projectId}`, updates);
+  },
+  
+  async deleteProject(projectId) {
+    return this.request('DELETE', `/api/v1/projects/${projectId}`);
+  },
+  
+  async getProjectLogs(projectId, limit = 50) {
+    return this.request('GET', `/api/v1/projects/${projectId}/logs?limit=${limit}`);
+  },
+  
+  async getProjectDebugs(projectId) {
+    return this.request('GET', `/api/v1/projects/${projectId}/debugs`);
+  },
+  
+  async createDebugRecord(projectId, data) {
+    return this.request('POST', `/api/v1/projects/${projectId}/debugs`, data);
+  },
+  
+  async updateDebugRecord(projectId, debugId, updates) {
+    return this.request('PUT', `/api/v1/projects/${projectId}/debugs/${debugId}`, updates);
+  },
+  
+  // ========== 开发记录 ==========
+  
+  async getRecentLogs(limit = 100) {
+    return this.request('GET', `/api/v1/logs/recent?limit=${limit}`);
+  },
+  
+  // ========== 统计 ==========
+  
+  async getStats() {
+    return this.request('GET', '/api/v1/stats');
+  }
+};
+
+// 导出
+window.api = api;
