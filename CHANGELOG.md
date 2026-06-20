@@ -2,6 +2,42 @@
 
 所有版本更新记录。极速科技生产环境部署实例。
 
+## [v1.3.0] - 2026-06-21
+
+### 🆕 P0优化项 (Issue #1)
+
+#### P0-1: WebSocket命令结果订阅机制
+- **文件**：`server/src/utils/ws-server.js`
+- **功能**：Agent可通过WebSocket订阅命令结果，结果完成后直接推送给订阅者而非广播
+- **新增消息类型**：
+  - `subscribe_result { command_id }` - 订阅命令结果
+  - `subscribed { command_id }` - 订阅确认
+- **订阅追踪**：`commandSubscriptions` Map管理订阅关系
+- **向后兼容**：未订阅的命令结果仍广播给所有Agent
+
+#### P0-2: 可配置命令超时
+- **文件**：`server/src/services/commandQueueService.js`
+- **修改**：`executeCommand()`现在使用命令存储的`timeout_ms`
+- **API支持**：REST API `POST /devices/:id/commands` 支持`timeout_ms`参数
+- **默认值**：30000ms (30秒)，可配置任意值
+
+### 📊 功能状态
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| WebSocket结果订阅 | ✅ | P0-1完成 |
+| 可配置超时 | ✅ | P0-2完成 |
+
+### 🔄 优化前 vs 优化后
+
+| 场景 | 优化前 | 优化后 |
+|------|--------|--------|
+| 命令结果获取 | HTTP轮询 | WebSocket实时推送 |
+| Docker构建超时 | 60-90s硬编码 | 可配置(timeout_ms) |
+| 长时间任务 | 无法追踪进度 | 支持15分钟+任务 |
+
+---
+
 ## [v1.2.2] - 2026-06-16
 
 ### 🐛 Bug修复

@@ -5,6 +5,16 @@ const deviceClients = new Map();
 global.deviceClients = deviceClients;
 const agentClients = new Set();
 
+// P0-1: Command subscription tracking - agent WS → command_id
+// When agent subscribes to a command result, we push result directly to that agent
+const commandSubscriptions = new Map(); // command_id → Set of agent WS connections
+
+// Helper: Get agent ID from WS connection (for identification)
+function getAgentId(ws) {
+  // Agents are stored in agentClients Set, assign temporary ID based on object reference
+  return `agent_${ws._id || (ws._id = Math.random().toString(36).slice(2, 8))}`;
+}
+
 function initWebSocket(server) {
   const wss = new WebSocket.Server({ noServer: true });
 
@@ -103,8 +113,33 @@ function initWebSocket(server) {
               duration_ms: msg.duration_ms || 0
             }).catch(e => console.error('[WS] Failed to update command result:', e.message));
           }
-          broadcastToAgents({ type: 'command_result', device_id: deviceId, ...msg });
+          // P0-1: Check if any agent subscribed to this command result
+          const resultMsg = { type: 'command_result', device_id: deviceId, ...msg };
+          const subscribers = commandSubscriptions.get(msg.command_id);
+          if (subscribers && subscribers.size > 0) {
+            // Push directly to subscribed agents only
+            const msgStr = JSON.stringify(resultMsg);
+            subscribers.forEach((agentWs) => {
+              if (agentWs.readyState === WebSocket.OPEN) {
+                agentWs.send(msgStr);
+              }
+            });
+            // Clean up subscription after pushing result
+            commandSubscriptions.delete(msg.command_id);
+          } else {
+            // No subscription - broadcast to all agents (backward compatible)
+            broadcastToAgents(resultMsg);
+          }
           handleSysinfoResult({...msg, deviceId});
+        } else if (msg.type === 'subscribe_result' && msg.command_id) {
+          // P0-1: Agent subscribes to command result via WebSocket
+          const agentId = getAgentId(ws);
+          if (!commandSubscriptions.has(msg.command_id)) {
+            commandSubscriptions.set(msg.command_id, new Set());
+          }
+          commandSubscriptions.get(msg.command_id).add(ws);
+          console.log(`[WS] Agent ${agentId} subscribed to command result: ${msg.command_id}`);
+          ws.send(JSON.stringify({ type: 'subscribed', command_id: msg.command_id }));
         } else if (msg.type === 'device_status') {
           broadcastToAgents({ type: 'device_status_update', device_id: deviceId, ...msg });
         }

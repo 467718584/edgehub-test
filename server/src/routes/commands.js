@@ -105,7 +105,8 @@ router.post('/:deviceId/commands', authMiddleware, async (req, res, next) => {
       priority,
       timeout_ms,
       callback_url,
-      callback_headers
+      callback_headers,
+      subscribe_result: req.body.subscribe_result // P0-1: Flag for WS result subscription
     });
     
     res.json({

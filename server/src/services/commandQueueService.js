@@ -107,9 +107,11 @@ class CommandQueueService {
       error.code = 'DEVICE_OFFLINE';
       throw error;
     }
+    // P0-2: Use command's stored timeout_ms if available, otherwise use provided timeout
+    const effectiveTimeout = command.timeout_ms || timeout;
     try {
       const startTime = Date.now();
-      const result = await this.sshPool.execCommand(deviceId, device.vpn_ip, 22, command.command, timeout);
+      const result = await this.sshPool.execCommand(deviceId, device.vpn_ip, 22, command.command, effectiveTimeout);
       const duration = Date.now() - startTime;
       return await this.reportCommandResult(deviceId, commandId, {
         stdout: result.stdout, stderr: result.stderr, exit_code: result.exitCode, duration_ms: duration, success: result.exitCode === 0
