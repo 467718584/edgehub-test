@@ -35,6 +35,7 @@ class CommandQueueService {
       command: cmd.command,
       priority: cmd.priority || 5,
       timeout_ms: cmd.timeout_ms || 30000,
+      subscribe_result: cmd.subscribe_result || false,
       callback_url: cmd.callback_url,
       callback_headers: cmd.callback_headers
     });

@@ -116,14 +116,29 @@ function initWebSocket(server) {
           // P0-1: Check if any agent subscribed to this command result
           const resultMsg = { type: 'command_result', device_id: deviceId, ...msg };
           const subscribers = commandSubscriptions.get(msg.command_id);
-          if (subscribers && subscribers.size > 0) {
+          
+          // Check if command has subscribe_result flag in DB (for REST API calls)
+          let dbSubscribed = false;
+          if (global.db && !subscribers) {
+            try {
+              const cmd = await global.db.getCommand(msg.command_id);
+              dbSubscribed = cmd && cmd.subscribe_result === 1;
+            } catch (e) {}
+          }
+          
+          if ((subscribers && subscribers.size > 0) || dbSubscribed) {
             // Push directly to subscribed agents only
             const msgStr = JSON.stringify(resultMsg);
-            subscribers.forEach((agentWs) => {
-              if (agentWs.readyState === WebSocket.OPEN) {
-                agentWs.send(msgStr);
-              }
-            });
+            if (subscribers) {
+              subscribers.forEach((agentWs) => {
+                if (agentWs.readyState === WebSocket.OPEN) {
+                  agentWs.send(msgStr);
+                }
+              });
+            } else {
+              // No WS subscription but DB flag set - broadcast to all agents
+              broadcastToAgents(resultMsg);
+            }
             // Clean up subscription after pushing result
             commandSubscriptions.delete(msg.command_id);
           } else {

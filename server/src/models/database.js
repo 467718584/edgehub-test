@@ -131,6 +131,7 @@ class Database {
         status TEXT DEFAULT 'pending',
         priority INTEGER DEFAULT 5,
         timeout_ms INTEGER DEFAULT 30000,
+        subscribe_result INTEGER DEFAULT 0,
         result TEXT,
         stdout TEXT,
         stderr TEXT,
@@ -635,8 +636,8 @@ class Database {
     return new Promise((resolve, reject) => {
       const stmt = this.db.prepare(`
         INSERT INTO commands 
-        (command_id, device_id, command, status, priority, timeout_ms, callback_url, callback_headers)
-        VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)
+        (command_id, device_id, command, status, priority, timeout_ms, subscribe_result, callback_url, callback_headers)
+        VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)
       `);
       
       stmt.run(
@@ -645,6 +646,7 @@ class Database {
         cmd.command,
         cmd.priority || 5,
         cmd.timeout_ms || 30000,
+        cmd.subscribe_result ? 1 : 0,
         cmd.callback_url || null,
         cmd.callback_headers ? JSON.stringify(cmd.callback_headers) : null,
         (err) => {
