@@ -8,15 +8,16 @@
 |------|-----|
 | **服务器** | 1.13.247.173 (Ubuntu) |
 | **域名** | speedonline.online |
-| **API端口** | 8080 (Node.js) |
+| **API端口** | 8081 (Docker) |
 | **Web面板** | http://1.13.247.173/edgehub-web/ |
 | **VPN** | WireGuard UDP 51820 |
+| **部署方式** | Docker 容器化部署 ✅ |
 
 ## 📁 仓库结构
 
 ```
 edgehub-test/
-├── server/                      # EdgeHub 服务端 (部署在云服务器)
+├── server/                      # EdgeHub 服务端源码
 │   ├── src/
 │   │   ├── app.js              # 主入口
 │   │   ├── routes/             # REST API 路由
@@ -57,11 +58,52 @@ edgehub-test/
 ├── Install-EdgeAgent.ps1        # Windows一键安装脚本
 ├── restart-weipc-agent.bat      # WEI-PC重启脚本
 ├── EDGEHUB-DEPLOYMENT.md       # 部署案例详细文档
+├── deployments/
+│   └── docker/                  # Docker 部署配置 ⭐
+│       ├── Dockerfile
+│       ├── docker-compose.yml
+│       ├── nginx/
+│       └── scripts/
 ├── CHANGELOG.md                # ⭐ 版本更新记录
 └── README.md
 ```
 
-## 🔧 服务部署
+## 🚀 Docker 部署 (推荐)
+
+### 快速启动
+
+```bash
+cd deployments/docker
+docker compose up -d
+```
+
+### 手动构建
+
+```bash
+cd deployments/docker
+docker build -t edgehub-api .
+docker run -d -p 127.0.0.1:8081:8080 \
+  -v /opt/edgehub/data:/app/data \
+  --name edgehub-api \
+  edgehub-api
+```
+
+### 数据迁移
+
+如果从传统部署迁移：
+
+```bash
+# 1. 备份现有数据
+cp -r /opt/edgehub/data /opt/edgehub/data.backup-$(date +%Y%m%d)
+
+# 2. 启动 Docker 容器（自动使用现有数据）
+docker run -d -p 127.0.0.1:8081:8080 \
+  -v /opt/edgehub/data:/app/data \
+  --name edgehub-api \
+  edgehub-api
+```
+
+## 🔧 传统部署 (Node.js)
 
 ### 启动服务端
 
@@ -144,21 +186,23 @@ curl -X POST http://1.13.247.173/api/v1/devices/82785476b5753520/commands \
 
 ## 📊 功能状态
 
-| 功能 | 状态 | 说明 |
+| 功能 | 状态 | 版本 |
 |------|------|------|
-| 设备注册 | ✅ | M1-M4完成 |
-| 命令下发 | ✅ | M5-M7完成，WebSocket闭环验证 |
-| 心跳监控 | ✅ | M4完成，TCP pong机制 |
-| WebSocket事件 | ✅ | M8完成 |
-| Python EdgeAgent | ✅ | M9完成 |
-| JavaScript SDK | ✅ | M10完成 |
-| OpenClaw Skill | ✅ | M11完成 |
-| MCP Server | ✅ | M12完成 |
-| OpenAPI文档 | ✅ | M13完成 |
-| 自动化测试 | ✅ | M14完成 |
-| 多智能体拓扑 | ✅ | M15完成 |
-| Sysinfo轮询 | ✅ | 每60秒自动采集 |
-| **Agent API Key权限体系** | ✅ | **v1.2.0新增** |
+| 设备注册 | ✅ | M1-M4 |
+| 命令下发 | ✅ | M5-M7 |
+| 心跳监控 | ✅ | M4 |
+| WebSocket事件 | ✅ | M8 |
+| Python EdgeAgent | ✅ | M9 |
+| JavaScript SDK | ✅ | M10 |
+| OpenClaw Skill | ✅ | M11 |
+| MCP Server | ✅ | M12 |
+| OpenAPI文档 | ✅ | M13 |
+| 自动化测试 | ✅ | M14 |
+| 多智能体拓扑 | ✅ | M15 |
+| Sysinfo轮询 | ✅ | v1.1.0 |
+| Agent API Key权限体系 | ✅ | v1.2.0 |
+| **WebSocket结果订阅** | ✅ | **v1.3.0** |
+| **Docker容器化部署** | ✅ | **v1.3.0** |
 
 ## 🖥️ Sysinfo轮询功能
 
@@ -185,10 +229,12 @@ curl -X POST http://1.13.247.173/api/v1/devices/82785476b5753520/commands \
 | 框架仓库 | https://github.com/467718584/agentlink |
 | 主站 | http://speedonline.online |
 | Web面板 | http://1.13.247.173/edgehub-web/ |
+| API端点 | http://1.13.247.173/api/v1/ |
 | 接入说明书 | http://1.13.247.173/edgehub-agent-manual.html |
 
 ---
 
-**部署版本**: EdgeHub v1.2.2 + EdgeAgent v4.1.0  
-**最后更新**: 2026-06-16  
+**部署版本**: EdgeHub v1.3.0 + EdgeAgent v4.1  
+**Docker镜像**: `edgehub-docker-edgehub-api:latest`  
+**最后更新**: 2026-06-23  
 **维护者**: 极速科技

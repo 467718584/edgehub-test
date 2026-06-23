@@ -1,0 +1,36 @@
+# Node.js
+node_modules
+npm-debug.log
+package-lock.json
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 文档
+*.md
+!README.md
+
+# Docker 相关（避免递归构建）
+deployments/docker
+deployments/docker-compose*.yml
+
+# 测试
+test
+tests
+__tests__
+
+# 其他
+*.log
+.env
+.env.*

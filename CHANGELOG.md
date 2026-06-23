@@ -2,6 +2,46 @@
 
 所有版本更新记录。极速科技生产环境部署实例。
 
+## [v1.3.1] - 2026-06-23
+
+### 🐛 Bug修复
+
+#### P0-1: subscribe_result REST API 修复
+- **文件**：`server/src/routes/commands.js`
+- **问题**：REST API 的 `subscribe_result: true` 参数被忽略，WebSocket订阅机制无法通过REST API触发
+- **修复**：
+  1. `commands`表添加 `subscribe_result INTEGER DEFAULT 0` 字段
+  2. `createCommand()` 传递 `subscribe_result` 参数
+  3. `ws-server.js` 收到 `command_result` 时检查DB中的 `subscribe_result` 标志并推送
+
+### 🚢 基础设施
+
+#### Docker 容器化部署
+- **目录**：`deployments/docker/`
+- **镜像**：`edgehub-docker-edgehub-api:latest`
+- **部署方式**：Docker Compose
+- **数据持久化**：挂载 `/opt/edgehub/data` 到容器 `/app/data`
+- **端口映射**：`127.0.0.1:8081:8080`
+
+**部署文件**：
+```
+deployments/docker/
+├── Dockerfile              # Node.js 18 + SQLite3
+├── docker-compose.yml      # 容器编排
+├── nginx/                  # Nginx 配置 (备用)
+├── scripts/
+│   └── migrate-data.sh    # 数据迁移脚本
+└── README.md              # 部署文档
+```
+
+**部署命令**：
+```bash
+cd deployments/docker
+docker compose up -d
+```
+
+---
+
 ## [v1.3.0] - 2026-06-21
 
 ### 🆕 P0优化项 (Issue #1)
