@@ -3018,3 +3018,45 @@ a:hover {
   color: var(--text-muted);
   line-height: 1.4;
 }
+
+
+/* 文件传输页面 */
+.direction-badge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.direction-badge.push {
+  background: var(--success-bg, #d1fae5);
+  color: var(--success, #059669);
+}
+.direction-badge.pull {
+  background: #dbeafe;
+  color: #2563eb;
+}
+.direction-badge:hover {
+  opacity: 0.8;
+}
+
+.table-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.table-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+tr.completed td {
+  opacity: 0.7;
+}
+tr.failed td {
+  background: #fef2f2;
+}
+

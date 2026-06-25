@@ -70,6 +70,14 @@
           </svg>
           命令
         </a>
+        <a href="#transfers" class="nav-item" data-page="transfers">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          文件传输
+        </a>
       </nav>
       
       <div class="sidebar-footer">
@@ -269,6 +277,61 @@
             <p class="loading">加载中...</p>
           </div>
         </div>
+
+        <div id="page-transfers" class="page">
+          <div class="stats-grid" style="margin-bottom:20px">
+            <div class="stat-card">
+              <div class="stat-label">总传输</div>
+              <div class="stat-value" id="transfer-total">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">完成</div>
+              <div class="stat-value" id="transfer-completed">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">进行中</div>
+              <div class="stat-value" id="transfer-inprogress">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">失败</div>
+              <div class="stat-value" id="transfer-failed">-</div>
+            </div>
+          </div>
+
+          <div class="table-container">
+            <div class="table-header">
+              <h3>传输记录</h3>
+              <div class="table-actions">
+                <button class="btn btn-primary" onclick="showPushModal()">
+                  <svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  推送文件
+                </button>
+                <button class="btn btn-secondary" onclick="showPullModal()">
+                  <svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  拉取文件
+                </button>
+                <button class="btn btn-secondary" onclick="loadTransfers()">刷新</button>
+              </div>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>方向</th>
+                  <th>设备</th>
+                  <th>文件名</th>
+                  <th>大小</th>
+                  <th>进度</th>
+                  <th>状态</th>
+                  <th>时间</th>
+                </tr>
+              </thead>
+              <tbody id="transfers-tbody">
+                <tr><td colspan="8" class="loading">加载中...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </main>
   </div>
@@ -308,8 +371,59 @@
     </div>
   </div>
   
+  <!-- 推送文件弹窗 -->
+  <div id="push-modal" class="modal">
+    <div class="modal-content">
+      <h3>推送文件到设备</h3>
+      <form id="push-form">
+        <div class="form-group">
+          <label>选择设备</label>
+          <select id="push-device" required>
+            <option value="">请选择设备</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>本地文件路径</label>
+          <input type="text" id="push-local-path" required placeholder="/home/ubuntu/test.txt">
+        </div>
+        <div class="form-group">
+          <label>远程目标路径</label>
+          <input type="text" id="push-remote-path" required placeholder="/home/ubuntu/test.txt">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('push-modal')">取消</button>
+          <button type="submit" class="btn btn-primary">开始推送</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 拉取文件弹窗 -->
+  <div id="pull-modal" class="modal">
+    <div class="modal-content">
+      <h3>从设备拉取文件</h3>
+      <form id="pull-form">
+        <div class="form-group">
+          <label>选择设备</label>
+          <select id="pull-device" required>
+            <option value="">请选择设备</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>设备上的文件路径</label>
+          <input type="text" id="pull-remote-path" required placeholder="/home/ubuntu/test.txt">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('pull-modal')">取消</button>
+          <button type="submit" class="btn btn-primary">开始拉取</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script src="js/api.js"></script>
   <script src="js/agents.js"></script>
+  <script src="js/transfers.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

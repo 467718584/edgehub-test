@@ -28,7 +28,8 @@ function navigateTo(page, params = {}) {
     projects: '项目',
     logs: '开发记录',
     'device-detail': '设备详情',
-    'project-detail': '项目详情'
+    'project-detail': '项目详情',
+    transfers: '文件传输'
   };
   document.getElementById('page-title').textContent = titles[page] || 'EdgeHub';
   
@@ -68,6 +69,9 @@ function navigateTo(page, params = {}) {
       break;
     case 'commands':
       loadCommands();
+      break;
+    case 'transfers':
+      if (window.loadTransfersPage) window.loadTransfersPage();
       break;
   }
 }
