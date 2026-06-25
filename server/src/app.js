@@ -15,7 +15,8 @@ const DevelopmentLogger = require('./services/developmentLogger');
 const { errorHandler } = require('./middlewares/errorHandler');
 const { router: devicesRouter, setDeviceService } = require('./routes/devices');
 const { router: execRouter, setExecService, setDatabase } = require('./routes/exec');
-const { router: filesRouter, setFileService } = require('./routes/files');
+const { router: filesRouter, setTransferService, setWsService } = require('./routes/files');
+const TransferService = require('./services/transferService');
 const { router: commandsRouter, setCommandQueueService } = require('./routes/commands');
 const projectsRouter = require('./routes/projects');
 const projectEnhance = require('./routes/projectEnhance');
@@ -47,13 +48,16 @@ const globalDevLogger = new DevelopmentLogger(db);
 // 初始化服务
 const deviceService = new DeviceService(db);
 const execService = new ExecService(db);
-const fileService = new FileService(db);
+const transferService = new TransferService(db);
 const commandQueueService = new CommandQueueService(db, execService.sshPool);
+
+// 初始化传输服务表
+transferService.initTables();
 
 // 设置路由的服务实例
 setDeviceService(deviceService);
 setExecService(execService);
-setFileService(fileService);
+setTransferService(transferService);
 setDatabase(db);
 setCommandQueueService(commandQueueService);
 setAgentDatabase(db);
@@ -135,7 +139,7 @@ global.globalDevLogger = globalDevLogger;
 // 路由
 app.use('/api/v1/devices', devicesRouter);
 app.use('/api/v1/devices', execRouter);
-app.use('/api/v1/devices', filesRouter);
+app.use('/api/v1', filesRouter);
 app.use('/api/v1/devices', commandsRouter);
 app.use('/api/v1/commands', commandsRouter);
 app.use('/api/v1/agents', agentsRouter);
@@ -172,7 +176,8 @@ const server = app.listen(config.port, '0.0.0.0', () => {
 });
 
 // Initialize WebSocket
-initWebSocket(server);
+const { broadcastTransferProgress } = initWebSocket(server);
+setWsService({ broadcastTransferProgress });
 // Start sysinfo polling for all online devices
 const { startSysinfoPolling } = require('./services/sysinfoPolling');
 startSysinfoPolling(60000); // 1 minute

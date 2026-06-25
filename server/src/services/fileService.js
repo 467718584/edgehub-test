@@ -105,6 +105,15 @@ class FileService {
     }
   }
   
+  // v1.0 兼容方法
+  async pushFileLegacy(deviceId, localFile, remotePath) {
+    return this.pushFile(deviceId, localFile, remotePath);
+  }
+  
+  async pullFileLegacy(deviceId, remotePath, localPath = null) {
+    return this.pullFile(deviceId, remotePath, localPath);
+  }
+  
   // 关闭连接池
   destroy() {
     this.sshPool.destroy();

@@ -199,4 +199,19 @@ async function pushCommandToDevice(deviceId, command) { console.log("[WS] pushCo
   return { success: true };
 }
 
-module.exports = { initWebSocket, pushCommandToDevice, broadcastToAgents };
+// Broadcast transfer progress to all agents
+function broadcastTransferProgress(transferId, progress) {
+  const message = {
+    type: 'transfer_progress',
+    transfer_id: transferId,
+    ...progress
+  };
+  const msgStr = JSON.stringify(message);
+  agentClients.forEach((ws) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(msgStr);
+    }
+  });
+}
+
+module.exports = { initWebSocket, pushCommandToDevice, broadcastToAgents, broadcastTransferProgress };

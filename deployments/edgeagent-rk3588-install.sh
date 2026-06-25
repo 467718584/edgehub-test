@@ -29,14 +29,14 @@ cd $INSTALL_DIR
 echo "[2/6] 安装Python依赖..."
 apt-get update -qq
 apt-get install -y -qq python3 python3-pip git > /dev/null 2>&1
-pip3 install -q requests>=2.28.0 psutil>=5.9.0
+pip3 install -q requests>=2.28.0 psutil>=5.9.0 websocket-client>=1.0
 
 echo "[3/6] 下载EdgeAgent代码..."
 if [ -d "/tmp/edgehub-tmp" ]; then
     rm -rf /tmp/edgehub-tmp
 fi
 git clone -q https://github.com/467718584/edgehub-test.git /tmp/edgehub-tmp
-cp /tmp/edgehub-tmp/agent/agent.py $INSTALL_DIR/
+cp /tmp/edgehub-tmp/agent/edgeagent-linux.py $INSTALL_DIR/agent.py
 cp /tmp/edgehub-tmp/agent/config.py $INSTALL_DIR/
 cp /tmp/edgehub-tmp/agent/services/*.py $INSTALL_DIR/services/ 2>/dev/null || mkdir -p $INSTALL_DIR/services
 cp /tmp/edgehub-tmp/agent/utils/*.py $INSTALL_DIR/utils/ 2>/dev/null || mkdir -p $INSTALL_DIR/utils
@@ -63,7 +63,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 $INSTALL_DIR/agent.py
+ExecStart=/usr/bin/python3 $INSTALL_DIR/agent.py --ws-url ws://1.13.247.173/ws
 Restart=always
 RestartSec=10
 User=root

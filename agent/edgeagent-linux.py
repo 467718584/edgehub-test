@@ -1,152 +1,278 @@
 #!/usr/bin/env python3
 """
-EdgeHub EdgeAgent v4.1 for Windows - WebSocket版本 + 文件传输
-使用WebSocket与EdgeHub通信
-
-v4.1 更新：
-- 异步命令执行：命令在独立线程中执行，不阻塞WebSocket主线程
-- 交互式命令检测：自动拒绝可能卡死的交互式命令
-- 文件分块传输：支持大文件推送、分块接收、断点续传
+EdgeHub EdgeAgent v4.1 for Linux - WebSocket版本 + 文件传输
+支持分块传输、断点续传、进度追踪
 """
-import os, sys, time, json, socket, platform, signal, subprocess, hashlib, urllib.request, re, threading, websocket, psutil, base64
-from datetime import datetime
-from urllib.error import URLError, HTTPError
-import argparse
-from queue import Queue
 
-VERSION = "4.1.1-Windows"
-AGENT_DIR = "C:\\EdgeAgent"
-CONFIG_FILE = os.path.join(AGENT_DIR, "config.json")
-LOG_FILE = os.path.join(AGENT_DIR, "logs", "edgeagent.log")
+import os
+import sys
+import json
+import time
+import socket
+import platform
+import argparse
+import threading
+import subprocess
+import hashlib
+import base64
+import shutil
+import urllib.request
+import urllib.error
+import websocket
+
+from datetime import datetime
+
+# ========== 版本信息 ==========
+VERSION = "4.1.1-Linux"
 
 # ========== 日志 ==========
 def log(msg, level="INFO"):
-    os.makedirs(os.path.join(AGENT_DIR, "logs"), exist_ok=True)
-    ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    line = f"{ts} [{level}] {msg}\n"
-    try:
-        with open(LOG_FILE, 'a', encoding='utf-8') as f:
-            f.write(line)
-    except:
-        pass
-    print(line.rstrip())
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] [{level}] {msg}", flush=True)
 
-# ========== 配置 ==========
+# ========== 配置管理 ==========
 class Config:
     def __init__(self, args):
-        self._ = {
-            'edgehub_url': args.url.rstrip('/'),
-            'ws_url': args.url.replace('http://', 'ws://').replace('https://', 'wss://').replace('/api/v1', '') + '/ws',
-            'device_id': hashlib.md5(args.device_name.encode()).hexdigest()[:16],
-            'device_name': args.device_name,
-            'device_type': 'windows',
-            'api_key': args.api_key,
-            'heartbeat_interval': 30,
-            'log_level': 'info',
-            'file_storage_dir': os.path.join(AGENT_DIR, 'recv')
-        }
-        self._save_config()
+        self.args = args
+        self.config_file = os.environ.get('EDGEAGENT_CONFIG', 'config.json')
+        self._config = self._load_config()
     
-    def _save_config(self):
-        try:
-            os.makedirs(AGENT_DIR, exist_ok=True)
-            with open(CONFIG_FILE, 'w') as f:
-                json.dump(self._, f, indent=2)
-        except Exception as e:
-            log(f"配置保存失败: {e}", "ERROR")
+    def _load_config(self):
+        # 默认配置
+        config = {
+            'edgehub_url': getattr(self.args, 'url', 'http://1.13.247.173:80/api/v1'),
+            'ws_url': getattr(self.args, 'ws_url', 'ws://1.13.247.173:80/ws'),
+            'api_key': getattr(self.args, 'api_key', 'edgehub_secret_key'),
+            'device_id': getattr(self.args, 'device_id', None),
+            'device_name': getattr(self.args, 'device_name', socket.gethostname()),
+            'device_type': 'linux',
+            'heartbeat_interval': 30,
+            'file_storage_dir': '/tmp/edgehub_recv'
+        }
+        
+        # 从配置文件加载
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, 'r') as f:
+                    loaded = json.load(f)
+                    config.update(loaded)
+            except Exception as e:
+                log(f"配置文件加载失败: {e}", "WARN")
+        
+        return config
     
     def g(self, *keys, default=None):
-        v = self._
-        for k in keys:
-            if isinstance(v, dict) and k in v:
-                v = v[k]
+        """获取嵌套配置值"""
+        value = self._config
+        for key in keys:
+            if isinstance(value, dict) and key in value:
+                value = value[key]
             else:
                 return default
-        return v
+        return value
+    
+    def s(self, key, value):
+        """设置配置值"""
+        keys = key.split('.')
+        config = self._config
+        for k in keys[:-1]:
+            if k not in config:
+                config[k] = {}
+            config = config[k]
+        config[keys[-1]] = value
+    
+    def save(self):
+        """保存配置"""
+        try:
+            with open(self.config_file, 'w') as f:
+                json.dump(self._config, f, indent=2)
+            return True
+        except Exception as e:
+            log(f"配置保存失败: {e}", "ERROR")
+            return False
 
-# ========== 系统信息 ==========
+
+# ========== 系统信息收集 ==========
 class SysInfo:
-    _cpu_usage_init = False
+    @staticmethod
+    def collect():
+        """收集系统信息"""
+        try:
+            cpu_info = SysInfo.get_cpu_info()
+            mem_info = SysInfo.get_memory()
+            uptime = SysInfo.get_uptime()
+            load = SysInfo.get_load_avg()
+            
+            return {
+                'platform': platform.system(),
+                'platform_release': platform.release(),
+                'architecture': platform.machine(),
+                'hostname': socket.gethostname(),
+                'cpu': cpu_info,
+                'memory': mem_info,
+                'uptime': uptime,
+                'load': load
+            }
+        except Exception as e:
+            log(f"系统信息收集失败: {e}", "ERROR")
+            return {}
     
     @staticmethod
     def get_cpu_info():
+        """获取CPU信息"""
         try:
-            return platform.processor() or 'Unknown'
-        except:
-            return 'Unknown'
-    
-    @staticmethod
-    def get_memory():
-        try:
-            mem = psutil.virtual_memory()
+            with open('/proc/cpuinfo', 'r') as f:
+                content = f.read()
+            
+            # 提取CPU型号
+            model_name = ''
+            cores = 0
+            for line in content.split('\n'):
+                if line.startswith('model name'):
+                    model_name = line.split(':')[1].strip()
+                    cores += 1
+                elif line.startswith('processor'):
+                    cores += 1
+            
+            if not model_name:
+                # ARM平台
+                if 'Hardware' in content:
+                    for line in content.split('\n'):
+                        if 'Hardware' in line:
+                            model_name = line.split(':')[1].strip()
+            
+            usage = SysInfo.get_cpu_usage()
+            
             return {
-                'total': mem.total // (1024**2),  # MB
-                'free': mem.free // (1024**2),
-                'available': mem.available // (1024**2),
-                'used': mem.used // (1024**2),
-                'percent': mem.percent
+                'model': model_name or 'Unknown',
+                'cores': cores or 1,
+                'usage': usage
             }
-        except:
-            return None
-    
-    @staticmethod
-    def collect():
-        # Init cpu_percent on first call (discard initial high value)
-        if not SysInfo._cpu_usage_init:
-            psutil.cpu_percent(interval=None)
-            SysInfo._cpu_usage_init = True
-        
-        try:
-            disk = psutil.disk_usage('C:\\')
-            boot_time = psutil.boot_time()
-            uptime_seconds = time.time() - boot_time
-            days = int(uptime_seconds // 86400)
-            hours = int((uptime_seconds % 86400) // 3600)
-            minutes = int((uptime_seconds % 3600) // 60)
-            uptime = f"{days}天 {hours}小时 {minutes}分钟"
-        except:
-            uptime = 'Unknown'
-        
-        return {
-            'cpu': {
-                'model': SysInfo.get_cpu_info(),
-                'cores': psutil.cpu_count() or 1,
-                'usage': psutil.cpu_percent(interval=None)
-            },
-            'memory': SysInfo.get_memory(),
-            'disk': {
-                'total': disk.total // (1024**3),  # GB
-                'used': disk.used // (1024**3),
-                'percent': disk.percent
-            },
-            'platform': f"{platform.system()} {platform.release()}",
-            'uptime': uptime
-        }
+        except Exception as e:
+            return {'model': 'Unknown', 'cores': 1, 'usage': 0}
     
     @staticmethod
     def get_cpu_usage():
-        return psutil.cpu_percent(interval=None)
+        """获取CPU使用率"""
+        try:
+            # 读取 /proc/stat
+            with open('/proc/stat', 'r') as f:
+                line = f.readline()
+            
+            fields = line.split()[1:]
+            idle1 = int(fields[3])
+            total1 = sum(int(x) for x in fields)
+            
+            time.sleep(0.1)
+            
+            with open('/proc/stat', 'r') as f:
+                line = f.readline()
+            
+            fields = line.split()[1:]
+            idle2 = int(fields[3])
+            total2 = sum(int(x) for x in fields)
+            
+            idle_delta = idle2 - idle1
+            total_delta = total2 - total1
+            
+            if total_delta == 0:
+                return 0
+            
+            usage = 100 * (1 - idle_delta / total_delta)
+            return round(usage, 1)
+        except:
+            return 0
+    
+    @staticmethod
+    def get_memory():
+        """获取内存信息"""
+        try:
+            with open('/proc/meminfo', 'r') as f:
+                lines = f.readlines()
+            
+            mem_total = mem_available = 0
+            for line in lines:
+                if line.startswith('MemTotal:'):
+                    mem_total = int(line.split()[1]) // 1024  # MB
+                elif line.startswith('MemAvailable:'):
+                    mem_available = int(line.split()[1]) // 1024  # MB
+            
+            mem_used = mem_total - mem_available
+            percent = (mem_used / mem_total * 100) if mem_total > 0 else 0
+            
+            return {
+                'total': mem_total,
+                'used': mem_used,
+                'available': mem_available,
+                'percent': round(percent, 1)
+            }
+        except:
+            return {'total': 0, 'used': 0, 'available': 0, 'percent': 0}
+    
+    @staticmethod
+    def get_uptime():
+        """获取运行时间"""
+        try:
+            with open('/proc/uptime', 'r') as f:
+                uptime_seconds = float(f.readline().split()[0])
+            return int(uptime_seconds)
+        except:
+            return 0
+    
+    @staticmethod
+    def get_load_avg():
+        """获取负载平均值"""
+        try:
+            load1, load5, load15 = os.getloadavg()
+            return {
+                '1min': round(load1, 2),
+                '5min': round(load5, 2),
+                '15min': round(load15, 2)
+            }
+        except:
+            return {'1min': 0, '5min': 0, '15min': 0}
+
 
 # ========== 命令执行器 ==========
 class CommandExecutor:
     def __init__(self):
-        self.workdir = os.environ.get('TEMP', 'C:\\Temp')
+        self.encoding = 'utf-8'
+        self.errors = 'replace'
     
     def execute(self, command, timeout=30000):
+        """执行命令"""
+        result = {
+            'success': True,
+            'stdout': '',
+            'stderr': '',
+            'exit_code': 0,
+            'duration_ms': 0
+        }
+        
         start_time = time.time()
-        result = {'success': False, 'stdout': '', 'stderr': '', 'exit_code': -1, 'duration_ms': 0}
         
         try:
+            # 判断是否是交互式命令
+            if self._is_interactive(command):
+                result['success'] = False
+                result['stderr'] = 'Interactive commands are not allowed'
+                result['exit_code'] = -1
+                return result
+            
+            # 执行命令
             proc = subprocess.Popen(
-                command, shell=True,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                cwd=self.workdir, text=True
+                command,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                encoding=self.encoding,
+                errors=self.errors
             )
             
             try:
                 stdout, stderr = proc.communicate(timeout=timeout/1000)
                 elapsed = (time.time() - start_time) * 1000
-                result['success'] = proc.returncode == 0
+                
                 result['stdout'] = stdout
                 result['stderr'] = stderr
                 result['exit_code'] = proc.returncode
@@ -157,7 +283,7 @@ class CommandExecutor:
                 elapsed = (time.time() - start_time) * 1000
                 result['success'] = False
                 result['stdout'] = stdout
-                result['stderr'] = f"命令执行超时 ({timeout/1000}秒)"
+                result['stderr'] = f"Command timeout ({timeout/1000}s)"
                 result['exit_code'] = -1
                 result['duration_ms'] = int(elapsed)
                 
@@ -170,6 +296,17 @@ class CommandExecutor:
             log(f"命令执行异常: {e}", "ERROR")
         
         return result
+    
+    def _is_interactive(self, command):
+        """检查是否是交互式命令"""
+        interactive_commands = [
+            'vim', 'nano', 'emacs', 'htop', 'top',
+            'less', 'more', 'man', 'ssh', 'scp',
+            'ftp', 'telnet', 'bash', 'sh'
+        ]
+        cmd_base = command.strip().split()[0] if command.strip() else ''
+        return cmd_base in interactive_commands
+
 
 # ========== HTTP客户端 ==========
 class HTTPClient:
@@ -195,6 +332,10 @@ class HTTPClient:
     
     def post(self, path, data=None):
         return self._do('POST', path, data)
+    
+    def get(self, path):
+        return self._do('GET', path)
+
 
 # ========== WebSocket客户端 ==========
 class WSClient:
@@ -209,64 +350,67 @@ class WSClient:
         self.on_connect = None
     
     def connect(self):
-        full_url = f"{self.url}?device_id={self.device_id}&api_key={self.api_key}&type=device"
-        log(f"[WS] Connecting to {full_url}")
-        
+        """建立WebSocket连接"""
         try:
+            ws_url = f"{self.url}?device_id={self.device_id}&api_key={self.api_key}&type=device"
             self.ws = websocket.WebSocketApp(
-                full_url,
+                ws_url,
                 on_message=self._on_message,
+                on_open=self._on_open,
                 on_error=self._on_error,
-                on_close=self._on_close,
-                on_open=self._on_open
+                on_close=self._on_close
             )
+            
             self.running = True
             self.ws.run_forever(ping_interval=30, ping_timeout=10)
+            
+            return True
         except Exception as e:
-            log(f"[WS] Connection failed: {e}", "ERROR")
+            log(f"WebSocket连接失败: {e}", "ERROR")
             return False
-        return True
-    
-    def _on_open(self, ws):
-        log("[WS] Connected!")
-        if self.on_connect:
-            self.on_connect()
     
     def _on_message(self, ws, message):
         try:
             data = json.loads(message)
-            log(f"[WS] Received: {json.dumps(data)[:100]}")
             if self.on_message:
                 self.on_message(data)
         except Exception as e:
-            log(f"[WS] Message parse error: {e}", "ERROR")
+            log(f"消息解析失败: {e}", "ERROR")
+    
+    def _on_open(self, ws):
+        log("[WS] 连接已建立")
+        if self.on_connect:
+            self.on_connect()
     
     def _on_error(self, ws, error):
-        log(f"[WS] Error: {error}", "ERROR")
+        log(f"[WS] 错误: {error}", "ERROR")
     
     def _on_close(self, ws, close_status_code, close_msg):
-        log(f"[WS] Closed: {close_status_code} {close_msg}")
+        log(f"[WS] 连接关闭: {close_status_code} {close_msg}")
         self.running = False
     
     def send(self, data):
-        try:
-            self.ws.send(json.dumps(data))
-            return True
-        except Exception:
-            return False
+        """发送消息"""
+        if self.ws and self.running:
+            try:
+                if isinstance(data, dict):
+                    data = json.dumps(data)
+                self.ws.send(data)
+            except Exception as e:
+                log(f"WebSocket发送失败: {e}", "ERROR")
     
     def close(self):
+        """关闭连接"""
         self.running = False
         if self.ws:
             self.ws.close()
 
-# ========== 文件传输 - 接收器 ==========
+
+# ========== 文件传输 ==========
 class FileReceiver:
     """文件接收器 - 接收分块数据并组装"""
     
-    def __init__(self, storage_dir=None):
-        if storage_dir is None:
-            storage_dir = os.path.join(AGENT_DIR, 'recv')
+    def __init__(self, storage_dir='/tmp/edgehub_recv'):
         self.storage_dir = storage_dir
         self.temp_dir = os.path.join(storage_dir, '.tmp')
         self.transfers = {}
@@ -342,7 +486,7 @@ class TransferState:
             # 验证MD5
             actual_hash = hashlib.md5(chunk_data).hexdigest()
             if actual_hash != hash_value:
-                raise ValueError(f"Chunk {chunk_index} hash mismatch: expected {hash_value}, got {actual_hash}")
+                raise ValueError(f"Chunk {chunk_index} hash mismatch")
             
             # 写入临时文件
             chunk_path = os.path.join(self.temp_dir, f"{self.transfer_id}.{chunk_index}.chunk")
@@ -366,12 +510,6 @@ class TransferState:
             raise ValueError(f"Missing chunks: {missing}")
         
         final_path = self.remote_path
-        
-        # 确保目录存在
-        final_dir = os.path.dirname(final_path)
-        if final_dir:
-            os.makedirs(final_dir, exist_ok=True)
-        
         temp_final = final_path + '.tmp'
         
         try:
@@ -380,11 +518,8 @@ class TransferState:
                     chunk_path = os.path.join(self.temp_dir, f"{self.transfer_id}.{i}.chunk")
                     with open(chunk_path, 'rb') as inp:
                         out.write(inp.read())
-                    os.remove(chunk_path)  # 删除已组装的块
+                    os.remove(chunk_path)
             
-            # 原子重命名
-            if os.path.exists(final_path):
-                os.remove(final_path)
             os.rename(temp_final, final_path)
             
             return {
@@ -397,6 +532,14 @@ class TransferState:
             if os.path.exists(temp_final):
                 os.remove(temp_final)
             raise e
+    
+    def calculate_hash(self, file_path):
+        """计算SHA256"""
+        sha256 = hashlib.sha256()
+        with open(file_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(65536), b''):
+                sha256.update(chunk)
+        return sha256.hexdigest()
     
     def get_progress(self):
         received = len(self.received_chunks)
@@ -415,62 +558,70 @@ class TransferState:
                 os.remove(chunk_path)
 
 
-# ========== 设备管理 ==========
+# ========== 设备注册 ==========
 class Device:
     def __init__(self, cfg, http):
         self.cfg = cfg
         self.http = http
         self.device_id = cfg.g('device_id')
-        self.status = 'offline'
     
     def register(self):
+        """注册设备"""
+        hostname = socket.gethostname()
+        try:
+            os_version = f"{platform.system()} {platform.release()}"
+            architecture = platform.machine()
+        except:
+            os_version = "Unknown"
+            architecture = "aarch64"
+        
         payload = {
             'device_id': self.device_id,
-            'device_name': self.cfg.g('device_name'),
-            'device_type': self.cfg.g('device_type'),
-            'os_version': f"{platform.system()} {platform.release()}",
-            'architecture': platform.machine(),
+            'device_name': self.cfg.g('device_name', hostname),
+            'device_type': self.cfg.g('device_type', 'linux'),
+            'os_version': os_version,
+            'architecture': architecture,
             'metadata': {'agent_version': VERSION, 'sysinfo': SysInfo.collect()}
         }
         
+        log(f"[REG] Registering device: {payload['device_name']}")
         r = self.http.post('/devices/register', payload)
+        
         if r and r.get('success'):
-            self.status = 'online'
-            log(f"注册成功 (device_id={self.device_id})")
+            data = r.get('data', {})
+            self.device_id = data.get('device_id', self.device_id)
+            self.cfg.s('device_id', self.device_id)
+            self.cfg.save()
+            log(f"[REG] Device registered: {self.device_id}")
             return True
         
-        log(f"注册失败: {r}", "ERROR")
+        log("[REG] Registration failed", "ERROR")
         return False
 
-# ========== 主程序 ==========
+
+# ========== EdgeAgent主程序 ==========
 class EdgeAgent:
     def __init__(self, args):
-        self.args = args
         self.cfg = Config(args)
-        self.http = HTTPClient(self.cfg.g('edgehub_url'), self.cfg.g('api_key'))
+        self.http = HTTPClient(
+            self.cfg.g('edgehub_url'),
+            self.cfg.g('api_key')
+        )
         self.device = Device(self.cfg, self.http)
-        self.executor = CommandExecutor()
-        self.running = False
         self.ws = None
-        self.file_receiver = FileReceiver(self.cfg.g('file_storage_dir'))
-        # 交互式命令黑名单
-        self._interactive_commands = ['copy con', 'more', 'edlin', 'edit', 'qbasic', 'debug']
-    
-    def _is_interactive_command(self, command):
-        """检测交互式命令（会等待用户输入，不适合自动化）"""
-        cmd_lower = command.lower()
-        return any(dangerous in cmd_lower for dangerous in self._interactive_commands)
+        self.running = True
+        self.executor = CommandExecutor()
+        self.file_receiver = FileReceiver(self.cfg.g('file_storage_dir', '/tmp/edgehub_recv'))
     
     def start(self):
-        self.running = True
+        """启动Agent"""
         log(f"=" * 50)
         log(f"EdgeHub EdgeAgent v{VERSION} 启动")
-        log(f"设备ID: {self.device.device_id}")
-        log(f"设备名: {self.cfg.g('device_name')}")
+        log(f"=" * 50)
+        log(f"设备ID: {self.device.device_id or '自动分配'}")
+        log(f"设备名称: {self.cfg.g('device_name')}")
         log(f"API地址: {self.cfg.g('edgehub_url')}")
         log(f"WS地址: {self.cfg.g('ws_url')}")
-        log(f"文件存储: {self.cfg.g('file_storage_dir')}")
-        log(f"=" * 50)
         
         # 注册设备
         if not self.device.register():
@@ -482,6 +633,7 @@ class EdgeAgent:
         return True
     
     def start_websocket(self):
+        """启动WebSocket连接"""
         ws_url = self.cfg.g('ws_url')
         device_id = self.device.device_id
         api_key = self.cfg.g('api_key')
@@ -492,19 +644,16 @@ class EdgeAgent:
             self.handle_message(data)
         
         def on_connect():
-            log("[WS] Connection established, ready for commands")
+            log("[WS] 连接已建立，等待命令...")
         
         self.ws.on_message = on_message
         self.ws.on_connect = on_connect
-        
-        log("[WS] Starting WebSocket connection...")
         
         heartbeat_interval = self.cfg.g('heartbeat_interval', 30)
         last_heartbeat = 0
         
         while self.running:
             if self.ws.connect():
-                # 连接成功后保持运行，同时处理心跳
                 while self.running and self.ws.running:
                     time.sleep(1)
                     last_heartbeat += 1
@@ -512,11 +661,11 @@ class EdgeAgent:
                         self.send_heartbeat()
                         last_heartbeat = 0
             else:
-                log(f"[WS] Reconnecting in {self.ws.reconnect_delay}s...", "WARN")
+                log(f"[WS] {self.ws.reconnect_delay}秒后重连...", "WARN")
                 time.sleep(self.ws.reconnect_delay)
     
     def send_heartbeat(self):
-        """发送心跳，包含系统信息"""
+        """发送心跳"""
         try:
             payload = {
                 'timestamp': datetime.now().isoformat(),
@@ -525,11 +674,9 @@ class EdgeAgent:
             }
             r = self.http.post(f'/devices/{self.device.device_id}/heartbeat', payload)
             if r and r.get('success'):
-                log(f"[HB] Heartbeat OK (CPU: {payload['sysinfo']['cpu']['usage']}%)")
-            else:
-                log(f"[HB] Heartbeat failed", "WARN")
+                log(f"[HB] Heartbeat OK")
         except Exception as e:
-            log(f"[HB] Heartbeat error: {e}", "ERROR")
+            log(f"[HB] Heartbeat failed: {e}", "WARN")
     
     def handle_message(self, data):
         """处理WebSocket消息"""
@@ -545,28 +692,14 @@ class EdgeAgent:
             log(f"[WS] Unknown message type: {msg_type}")
     
     def handle_command(self, cmd):
-        """执行命令（异步，不阻塞WebSocket主线程）"""
+        """处理命令"""
         command_id = cmd.get('command_id')
         command = cmd.get('command', '')
         timeout = cmd.get('timeout_ms', 30000)
         
         log(f"[CMD] {command_id}: {command[:80]}...")
         
-        # 检测交互式命令
-        if self._is_interactive_command(command):
-            log(f"[CMD] 拒绝交互式命令: {command[:50]}...", "WARN")
-            self.ws.send({
-                'type': 'command_result',
-                'command_id': command_id,
-                'success': False,
-                'stdout': '',
-                'stderr': f'交互式命令可能被卡死，已拒绝执行: {command[:50]}',
-                'exit_code': -1,
-                'duration_ms': 0
-            })
-            return
-        
-        # 异步执行命令，不阻塞主线程
+        # 异步执行
         thread = threading.Thread(
             target=self._execute_async,
             args=(command_id, command, timeout)
@@ -574,12 +707,11 @@ class EdgeAgent:
         thread.start()
     
     def _execute_async(self, command_id, command, timeout):
-        """异步执行命令（在线程中）"""
+        """异步执行命令"""
         result = self.executor.execute(command, timeout)
         
-        log(f"[CMD] Done: exit={result['exit_code']}, duration={result['duration_ms']}ms")
+        log(f"[CMD] Done: exit={result['exit_code']}, dur={result['duration_ms']}ms")
         
-        # 通过WebSocket发送结果
         try:
             self.ws.send(json.dumps({
                 'type': 'command_result',
@@ -593,8 +725,6 @@ class EdgeAgent:
         except Exception as e:
             log(f"[WS] Send result failed: {e}", "ERROR")
     
-    # ========== 文件传输处理 ==========
-    
     def handle_transfer(self, data):
         """处理文件传输消息"""
         msg_type = data.get('type')
@@ -606,8 +736,6 @@ class EdgeAgent:
                 self.handle_transfer_chunk(data)
             elif msg_type == 'transfer_cancel':
                 self.handle_transfer_cancel(data)
-            else:
-                log(f"[FT] Unknown transfer type: {msg_type}")
         except Exception as e:
             log(f"[FT] Error: {e}", "ERROR")
             self.ws.send({'type': 'transfer_error', 'error': str(e)})
@@ -620,7 +748,7 @@ class EdgeAgent:
         total_chunks = data.get('total_chunks')
         remote_path = data.get('remote_path')
         
-        log(f"[FT] Start: {transfer_id} -> {remote_path} ({total_chunks} chunks)")
+        log(f"[FT] Start: {transfer_id} -> {remote_path}")
         
         self.file_receiver.start_transfer(transfer_id, file_name, file_size, total_chunks, remote_path)
         
@@ -637,34 +765,25 @@ class EdgeAgent:
         hash_value = data.get('hash')
         is_last = data.get('is_last', False)
         
-        try:
-            result = self.file_receiver.receive_chunk(transfer_id, chunk_index, chunk_data, hash_value)
-            
-            log(f"[FT] Chunk {chunk_index}/{result['received']} ({result['progress']}%)")
-            
-            if is_last:
-                assemble_result = self.file_receiver.assemble_transfer(transfer_id)
-                log(f"[FT] Complete: {assemble_result['file_path']}")
-                self.ws.send({
-                    'type': 'transfer_complete',
-                    'transfer_id': transfer_id,
-                    'file_path': assemble_result['file_path'],
-                    'file_size': assemble_result['file_size']
-                })
-            else:
-                self.ws.send({
-                    'type': 'chunk_received',
-                    'transfer_id': transfer_id,
-                    'chunk_index': chunk_index,
-                    'progress': result['progress']
-                })
-        except Exception as e:
-            log(f"[FT] Chunk error: {e}", "ERROR")
+        result = self.file_receiver.receive_chunk(transfer_id, chunk_index, chunk_data, hash_value)
+        
+        log(f"[FT] Chunk {chunk_index}/{result['received']} ({result['progress']}%)")
+        
+        if is_last:
+            assemble_result = self.file_receiver.assemble_transfer(transfer_id)
+            log(f"[FT] Complete: {assemble_result['file_path']}")
             self.ws.send({
-                'type': 'transfer_error',
+                'type': 'transfer_complete',
+                'transfer_id': transfer_id,
+                'file_path': assemble_result['file_path'],
+                'file_size': assemble_result['file_size']
+            })
+        else:
+            self.ws.send({
+                'type': 'chunk_received',
                 'transfer_id': transfer_id,
                 'chunk_index': chunk_index,
-                'error': str(e)
+                'progress': result['progress']
             })
     
     def handle_transfer_cancel(self, data):
@@ -678,18 +797,23 @@ class EdgeAgent:
         })
     
     def stop(self):
+        """停止Agent"""
         self.running = False
         if self.ws:
             self.ws.close()
         log("Agent已停止")
 
+
 # ========== 入口 ==========
 def parse_args():
-    parser = argparse.ArgumentParser(description='EdgeHub EdgeAgent')
-    parser.add_argument('--url', default='http://1.13.247.173:80/api/v1', help='EdgeHub地址')
+    parser = argparse.ArgumentParser(description='EdgeHub EdgeAgent v4.1')
+    parser.add_argument('--url', default='http://1.13.247.173:80/api/v1', help='EdgeHub API地址')
+    parser.add_argument('--ws-url', default='ws://1.13.247.173:80/ws', help='EdgeHub WebSocket地址')
     parser.add_argument('--api-key', default='edgehub_secret_key', help='API密钥')
+    parser.add_argument('--device-id', default=None, help='设备ID')
     parser.add_argument('--device-name', default=socket.gethostname(), help='设备名称')
     return parser.parse_args()
+
 
 if __name__ == '__main__':
     args = parse_args()
