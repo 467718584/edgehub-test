@@ -63,6 +63,9 @@ setCommandQueueService(commandQueueService);
 setAgentDatabase(db);
 setAuthDatabase(db);
 
+// 设置全局变量供ws-server.js使用
+global.transferService = transferService;
+
 // 创建Express应用
 const app = express();
 

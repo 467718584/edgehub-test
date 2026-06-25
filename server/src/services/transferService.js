@@ -473,6 +473,238 @@ class TransferService {
     const row = await this.db.get(sql, params);
     return row;
   }
+  
+  /**
+   * Pull模式: 从设备拉取文件
+   * 1. 创建传输任务
+   * 2. 发送命令到EdgeAgent读取文件
+   * 3. 接收EdgeAgent发送的分块数据
+   * 4. 组装文件
+   */
+  async initiatePullTransfer(options) {
+    const {
+      projectId,
+      deviceId,
+      remotePath,  // 设备上的文件路径
+      localPath,   // EdgeHub上的存储路径
+      fileName,
+      priority = 3
+    } = options;
+    
+    // 获取设备信息
+    const device = await this.db.getDevice(deviceId);
+    if (!device) {
+      const error = new Error('设备不存在');
+      error.statusCode = 404;
+      error.code = 'DEVICE_NOT_FOUND';
+      throw error;
+    }
+    
+    if (device.status !== 'online') {
+      const error = new Error('设备不在线');
+      error.statusCode = 503;
+      error.code = 'DEVICE_OFFLINE';
+      throw error;
+    }
+    
+    // 生成分块查询命令 (EdgeAgent会读取文件并计算分块信息)
+    const transferId = generateId('tf');
+    const chunkSize = this.defaultChunkSize;
+    
+    // 在EdgeHub上创建目标文件路径
+    if (!localPath) {
+      const filename = fileName || path.basename(remotePath);
+      localPath = path.join(this.uploadDir, `${transferId}_${filename}`);
+    }
+    
+    // 确保目录存在
+    const localDir = path.dirname(localPath);
+    if (!fs.existsSync(localDir)) {
+      fs.mkdirSync(localDir, { recursive: true });
+    }
+    
+    // 插入传输任务 (等待EdgeAgent返回文件信息)
+    await this.db.run(`
+      INSERT INTO file_transfers 
+      (id, project_id, device_id, direction, local_path, remote_path, file_name, status, chunk_size, priority, total_chunks, file_size)
+      VALUES (?, ?, ?, 'pull', ?, ?, ?, 'initiating', ?, ?, 0, 0)
+    `, [transferId, projectId || null, deviceId, localPath, remotePath, fileName || path.basename(remotePath), chunkSize, priority]);
+    
+    // 创建初始块记录占位 (实际数量在EdgeAgent返回后更新)
+    // 注意: 块记录在实际接收时创建
+    
+    return {
+      transfer_id: transferId,
+      status: 'initiating',
+      remote_path: remotePath,
+      local_path: localPath
+    };
+  }
+  
+  /**
+   * 更新Pull传输的文件信息 (EdgeAgent返回文件大小后)
+   */
+  async updatePullTransferInfo(transferId, fileSize, fileHash, totalChunks) {
+    await this.db.run(`
+      UPDATE file_transfers 
+      SET file_size = ?, file_hash = ?, total_chunks = ?, status = 'transferring'
+      WHERE id = ? AND direction = 'pull'
+    `, [fileSize, fileHash, totalChunks, transferId]);
+    
+    // 创建块记录
+    const chunkSize = this.defaultChunkSize;
+    for (let i = 0; i < totalChunks; i++) {
+      const currentChunkSize = Math.min(chunkSize, fileSize - i * chunkSize);
+      await this.db.run(`
+        INSERT INTO transfer_chunks (transfer_id, chunk_index, chunk_size, status)
+        VALUES (?, ?, ?, 'pending')
+      `, [transferId, i, currentChunkSize]);
+    }
+    
+    return { success: true };
+  }
+  
+  /**
+   * 接收Pull模式下的分块数据 (从EdgeAgent)
+   */
+  async receivePullChunk(transferId, chunkIndex, data, hash, isLast = false) {
+    const transfer = await this.getTransfer(transferId);
+    if (!transfer) {
+      throw new Error('传输任务不存在');
+    }
+    
+    if (transfer.direction !== 'pull') {
+      throw new Error('不是Pull传输');
+    }
+    
+    // 解码数据并写入临时文件
+    const buffer = Buffer.from(data, 'base64');
+    const tempPath = path.join(this.tempDir, `${transferId}.${chunkIndex}.chunk`);
+    fs.writeFileSync(tempPath, buffer);
+    
+    // 更新块状态
+    await this.db.run(`
+      UPDATE transfer_chunks 
+      SET status = 'transferred', chunk_hash = ?, transferred_at = CURRENT_TIMESTAMP
+      WHERE transfer_id = ? AND chunk_index = ?
+    `, [hash, transferId, chunkIndex]);
+    
+    // 更新传输进度
+    await this.db.run(`
+      UPDATE file_transfers 
+      SET transferred_chunks = transferred_chunks + 1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [transferId]);
+    
+    // 如果是最后一块，组装文件
+    if (isLast) {
+      return await this.completePullTransfer(transferId);
+    }
+    
+    // 返回当前进度
+    const updated = await this.getTransfer(transferId);
+    return {
+      success: true,
+      chunk_index: chunkIndex,
+      received: updated.progress.transferred_chunks,
+      total: updated.total_chunks,
+      progress: updated.progress.percentage
+    };
+  }
+  
+  /**
+   * 完成Pull传输 - 组装文件
+   */
+  async completePullTransfer(transferId) {
+    const transfer = await this.getTransfer(transferId);
+    if (!transfer) {
+      throw new Error('传输任务不存在');
+    }
+    
+    const finalPath = transfer.local_path;
+    const tempDir = this.tempDir;
+    const tempFinalPath = finalPath + '.tmp';
+    
+    try {
+      // 按顺序合并所有块
+      const writeStream = fs.createWriteStream(tempFinalPath);
+      
+      for (let i = 0; i < transfer.total_chunks; i++) {
+        const chunkPath = path.join(tempDir, `${transferId}.${i}.chunk`);
+        if (!fs.existsSync(chunkPath)) {
+          throw new Error(`分块 ${i} 缺失`);
+        }
+        const chunkData = fs.readFileSync(chunkPath);
+        writeStream.write(chunkData);
+        fs.unlinkSync(chunkPath); // 删除已组装的块
+      }
+      
+      writeStream.end();
+      
+      await new Promise((resolve, reject) => {
+        writeStream.on('finish', resolve);
+        writeStream.on('error', reject);
+      });
+      
+      // 原子重命名
+      if (fs.existsSync(finalPath)) {
+        fs.unlinkSync(finalPath);
+      }
+      fs.renameSync(tempFinalPath, finalPath);
+      
+      // 验证文件完整性
+      if (transfer.file_hash) {
+        const actualHash = await this.calculateFileHash(finalPath);
+        if (actualHash !== transfer.file_hash) {
+          fs.unlinkSync(finalPath);
+          throw new Error('文件完整性校验失败');
+        }
+      }
+      
+      // 更新状态
+      await this.updateTransferStatus(transferId, 'completed');
+      
+      return {
+        success: true,
+        transfer_id: transferId,
+        file_path: finalPath,
+        file_size: fs.statSync(finalPath).size
+      };
+      
+    } catch (e) {
+      if (fs.existsSync(tempFinalPath)) {
+        fs.unlinkSync(tempFinalPath);
+      }
+      throw e;
+    }
+  }
+  
+  /**
+   * 获取Pull传输的下载URL
+   */
+  async getPullDownloadUrl(transferId) {
+    const transfer = await this.getTransfer(transferId);
+    if (!transfer) {
+      throw new Error('传输任务不存在');
+    }
+    
+    if (transfer.status !== 'completed') {
+      throw new Error('传输尚未完成');
+    }
+    
+    if (transfer.direction !== 'pull') {
+      throw new Error('不是Pull传输');
+    }
+    
+    // 返回文件路径 (前端可以通过nginx访问)
+    return {
+      success: true,
+      file_path: transfer.local_path,
+      file_name: transfer.file_name,
+      file_size: transfer.file_size,
+      download_url: `/api/v1/transfers/${transferId}/download`
+    };
+  }
 }
 
 module.exports = TransferService;

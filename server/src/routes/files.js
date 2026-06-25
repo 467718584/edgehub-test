@@ -267,6 +267,91 @@ router.get('/stats', async (req, res, next) => {
   }
 });
 
+// ========== Pull 模式 API ==========
+
+/**
+ * POST /api/v1/transfers/pull
+ * 发起从设备拉取文件的请求
+ */
+router.post('/transfers/pull', async (req, res, next) => {
+  try {
+    const { project_id, device_id, remote_path, local_path, file_name, priority } = req.body;
+    
+    if (!device_id || !remote_path) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_PARAMS', message: 'device_id和remote_path为必填' },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // 创拉取传输任务
+    const result = await transferService.initiatePullTransfer({
+      projectId: project_id,
+      deviceId: device_id,
+      remotePath: remote_path,
+      localPath: local_path,
+      fileName: file_name,
+      priority: priority || 3
+    });
+    
+    // 发送命令到EdgeAgent，让它读取文件并发送分块
+    const { pushCommandToDevice } = require('../utils/ws-server');
+    const commandId = `tf_cmd_${Date.now()}`;
+    
+    // EdgeAgent收到这个命令后，会读取文件并通过WebSocket发送分块
+    await pushCommandToDevice(device_id, {
+      command_id: commandId,
+      command: `__FILE_PULL__:${result.transfer_id}:${remote_path}`,
+      timeout_ms: 300000  // 5分钟超时
+    });
+    
+    res.json({
+      success: true,
+      data: result,
+      command_id: commandId,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/v1/transfers/:transferId/download
+ * 下载Pull传输完成的文件
+ */
+router.get('/transfers/:transferId/download', async (req, res, next) => {
+  try {
+    const { transferId } = req.params;
+    
+    const downloadInfo = await transferService.getPullDownloadUrl(transferId);
+    
+    if (!downloadInfo.success) {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: '文件不存在' },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // 设置下载头
+    res.setHeader('Content-Disposition', `attachment; filename="${downloadInfo.file_name}"`);
+    res.setHeader('Content-Length', downloadInfo.file_size);
+    
+    // 流式发送文件
+    const fs = require('fs');
+    const stream = fs.createReadStream(downloadInfo.file_path);
+    stream.pipe(res);
+    
+    stream.on('error', (err) => {
+      next(err);
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // ========== v1.0 兼容API (deprecated) ==========
 
 /**

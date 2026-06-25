@@ -552,6 +552,19 @@ class EdgeAgent:
         
         log(f"[CMD] {command_id}: {command[:80]}...")
         
+        # 检测Pull模式命令
+        if command.startswith('__FILE_PULL__:'):
+            parts = command.split(':', 2)
+            if len(parts) >= 3:
+                transfer_id = parts[1]
+                remote_path = parts[2]
+                thread = threading.Thread(
+                    target=self._handle_pull_async,
+                    args=(command_id, transfer_id, remote_path)
+                )
+                thread.start()
+                return
+        
         # 检测交互式命令
         if self._is_interactive_command(command):
             log(f"[CMD] 拒绝交互式命令: {command[:50]}...", "WARN")
@@ -592,6 +605,94 @@ class EdgeAgent:
             }))
         except Exception as e:
             log(f"[WS] Send result failed: {e}", "ERROR")
+    
+    def _handle_pull_async(self, command_id, transfer_id, remote_path):
+        """异步处理Pull请求: 读取本地文件并分块发送"""
+        import base64 as b64
+        log(f"[FT] Pull: {transfer_id} <- {remote_path}")
+        
+        try:
+            # 检查文件是否存在
+            if not os.path.exists(remote_path):
+                self.ws.send({
+                    'type': 'command_result',
+                    'command_id': command_id,
+                    'success': False,
+                    'stdout': '',
+                    'stderr': f'File not found: {remote_path}',
+                    'exit_code': -1,
+                    'duration_ms': 0
+                })
+                return
+            
+            file_size = os.path.getsize(remote_path)
+            chunk_size = 2 * 1024 * 1024  # 2MB
+            total_chunks = (file_size + chunk_size - 1) // chunk_size
+            
+            # 计算文件哈希
+            file_hash = self._calculate_sha256(remote_path)
+            
+            # 发送文件信息给EdgeHub
+            self.ws.send({
+                'type': 'transfer_pull_info',
+                'transfer_id': transfer_id,
+                'command_id': command_id,
+                'file_name': os.path.basename(remote_path),
+                'file_size': file_size,
+                'file_hash': file_hash,
+                'total_chunks': total_chunks
+            })
+            
+            # 分块读取并发送
+            with open(remote_path, 'rb') as f:
+                for i in range(total_chunks):
+                    chunk_data = f.read(chunk_size)
+                    chunk_hash = hashlib.md5(chunk_data).hexdigest()
+                    
+                    # 发送分块
+                    self.ws.send({
+                        'type': 'transfer_pull_chunk',
+                        'transfer_id': transfer_id,
+                        'chunk_index': i,
+                        'data': b64.b64encode(chunk_data).decode(),
+                        'hash': chunk_hash,
+                        'is_last': i == total_chunks - 1
+                    })
+                    
+                    log(f"[FT] Chunk {i+1}/{total_chunks} sent")
+            
+            # 发送完成结果
+            self.ws.send({
+                'type': 'command_result',
+                'command_id': command_id,
+                'success': True,
+                'stdout': f'Pull complete: {file_size} bytes',
+                'stderr': '',
+                'exit_code': 0,
+                'duration_ms': 0
+            })
+            
+            log(f"[FT] Pull complete: {file_size} bytes")
+            
+        except Exception as e:
+            log(f"[FT] Pull error: {e}", "ERROR")
+            self.ws.send({
+                'type': 'command_result',
+                'command_id': command_id,
+                'success': False,
+                'stdout': '',
+                'stderr': str(e),
+                'exit_code': -1,
+                'duration_ms': 0
+            })
+    
+    def _calculate_sha256(self, file_path):
+        """计算文件SHA256"""
+        sha256 = hashlib.sha256()
+        with open(file_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(65536), b''):
+                sha256.update(chunk)
+        return sha256.hexdigest()
     
     # ========== 文件传输处理 ==========
     

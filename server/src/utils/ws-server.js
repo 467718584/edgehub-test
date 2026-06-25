@@ -157,6 +157,47 @@ function initWebSocket(server) {
           ws.send(JSON.stringify({ type: 'subscribed', command_id: msg.command_id }));
         } else if (msg.type === 'device_status') {
           broadcastToAgents({ type: 'device_status_update', device_id: deviceId, ...msg });
+        } else if (msg.type === 'transfer_pull_info') {
+          // EdgeAgent返回Pull传输的文件信息
+          console.log(`[WS] Transfer pull info: ${msg.transfer_id}, size=${msg.file_size}, chunks=${msg.total_chunks}`);
+          // 更新传输任务信息
+          if (global.transferService && msg.transfer_id) {
+            global.transferService.updatePullTransferInfo(
+              msg.transfer_id,
+              msg.file_size,
+              msg.file_hash,
+              msg.total_chunks
+            ).catch(e => console.error('[WS] updatePullTransferInfo error:', e.message));
+          }
+          // 转发给订阅者(如果有)
+          broadcastToAgents({ type: 'transfer_pull_info', device_id: deviceId, ...msg });
+        } else if (msg.type === 'transfer_pull_chunk') {
+          // EdgeAgent发送的分块数据
+          if (global.transferService && msg.transfer_id) {
+            global.transferService.receivePullChunk(
+              msg.transfer_id,
+              msg.chunk_index,
+              msg.data,
+              msg.hash,
+              msg.is_last || false
+            ).then(result => {
+              // 广播进度
+              broadcastTransferProgress(msg.transfer_id, {
+                type: 'transfer_pull_chunk',
+                device_id: deviceId,
+                chunk_index: msg.chunk_index,
+                progress: result.progress,
+                is_last: msg.is_last || false
+              });
+            }).catch(e => {
+              console.error('[WS] receivePullChunk error:', e.message);
+              broadcastToAgents({ 
+                type: 'transfer_error', 
+                transfer_id: msg.transfer_id, 
+                error: e.message 
+              });
+            });
+          }
         }
       } catch (e) {
         ws.send(JSON.stringify({ type: 'error', message: e.message }));
