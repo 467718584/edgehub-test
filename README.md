@@ -1,6 +1,6 @@
 # EdgeHub-test | 实地部署实例 | 极速科技的生产环境
 
-**关系**：EdgeHub-test 是 AgentLink 框架在极速科技的**具体部署实现**。
+**关系**:EdgeHub-test 是 AgentLink 框架在极速科技的**具体部署实现**。
 
 ## 🏠 部署信息
 
@@ -90,13 +90,13 @@ docker run -d -p 127.0.0.1:8081:8080 \
 
 ### 数据迁移
 
-如果从传统部署迁移：
+如果从传统部署迁移:
 
 ```bash
 # 1. 备份现有数据
 cp -r /opt/edgehub/data /opt/edgehub/data.backup-$(date +%Y%m%d)
 
-# 2. 启动 Docker 容器（自动使用现有数据）
+# 2. 启动 Docker 容器(自动使用现有数据)
 docker run -d -p 127.0.0.1:8081:8080 \
   -v /opt/edgehub/data:/app/data \
   --name edgehub-api \
@@ -173,12 +173,12 @@ python agent.py
 ### 使用示例
 
 ```bash
-# 管理员：可给任意设备下发命令
+# 管理员:可给任意设备下发命令
 curl -X POST http://1.13.247.173/api/v1/devices/82b2731d58533598/commands \
   -H "X-API-Key: edgehub_secret_key" \
   -d '{"command": "ls -la"}'
 
-# Agent：只能给已绑定设备下发命令
+# Agent:只能给已绑定设备下发命令
 curl -X POST http://1.13.247.173/api/v1/devices/82785476b5753520/commands \
   -H "X-API-Key: eh_key_ivp_agent_001_6747f7824d09c6d091128b360fa43831" \
   -d '{"command": "python detect.py"}'
@@ -203,6 +203,8 @@ curl -X POST http://1.13.247.173/api/v1/devices/82785476b5753520/commands \
 | Agent API Key权限体系 | ✅ | v1.2.0 |
 | **WebSocket结果订阅** | ✅ | **v1.3.0** |
 | **Docker容器化部署** | ✅ | **v1.3.0** |
+| **文件传输协议 v2.0** | ✅ | **v1.3.2** |
+| **项目文件传输集成** | ✅ | **v1.3.3** |
 
 ## 🖥️ Sysinfo轮询功能
 
@@ -222,6 +224,67 @@ curl -X POST http://1.13.247.173/api/v1/devices/82785476b5753520/commands \
 }
 ```
 
+## 📁 文件传输协议 v2.0
+
+### 功能特性
+- **Push模式**: Server → 设备 (支持大文件分块)
+- **Pull模式**: 设备 → Server
+- **多块传输**: 文件 >2MB 自动分块
+- **断点续传**: 支持 resume 接口
+- **并行传输**: 最多3个并发传输任务
+- **队列管理**: 优先级调度 (1-5级)
+- **项目集成**: 自动关联 project_id,记录到开发日志
+
+### API端点
+
+#### 传输管理
+```bash
+# 获取传输状态
+GET /api/v1/transfers/:transferId
+
+# 获取传输队列
+GET /api/v1/files/queue
+
+# 修改传输优先级
+POST /api/v1/files/queue/priority
+
+# 取消传输
+DELETE /api/v1/files/queue/:transferId
+
+# 断点续传
+GET /api/v1/transfers/:id/resume
+```
+
+#### 项目文件传输
+```bash
+# 获取项目的传输历史
+GET /api/v1/projects/:id/transfers
+
+# 获取项目传输统计
+GET /api/v1/projects/:id/transfers/stats
+```
+
+#### 文件推送/拉取
+```bash
+# Push文件到设备 (multipart)
+POST /api/v1/:deviceId/files/push
+  -H "X-API-Key: edgehub_secret_key"
+  -F "file=@/path/to/file"
+  -F "remote_path=C:\\temp\\file.txt"
+  -F "project_id=8"  # 可选
+
+# Pull文件从设备
+GET /api/v1/:deviceId/files/pull?remote_path=/path/file.txt&project_id=8
+```
+
+### EdgeAgent文件接收
+EdgeAgent 内置 `FileReceiver` 类处理文件接收:
+- `transfer_start` - 初始化接收
+- `transfer_chunk` - 接收数据块
+- 自动MD5校验
+
+**版本要求**: EdgeAgent v4.1.1+
+
 ## 🔗 相关链接
 
 | 资源 | 地址 |
@@ -234,7 +297,7 @@ curl -X POST http://1.13.247.173/api/v1/devices/82785476b5753520/commands \
 
 ---
 
-**部署版本**: EdgeHub v1.3.0 + EdgeAgent v4.1  
-**Docker镜像**: `edgehub-docker-edgehub-api:latest`  
-**最后更新**: 2026-06-23  
+**部署版本**: EdgeHub v1.3.3 + EdgeAgent v4.1.1
+**Docker镜像**: `edgehub-docker-edgehub-api:latest`
+**最后更新**: 2026-06-26
 **维护者**: 极速科技
