@@ -75,6 +75,29 @@ function initWebSocket(server) {
       if (global.db) {
         global.db.updateDeviceStatus(deviceId, 'online').catch(() => {});
       }
+      
+      // 设备重连时，主动推送所有 pending 命令
+      if (global.commandService) {
+        global.commandService.getPendingCommandsForDevice(deviceId).then(pendingCommands => {
+          if (pendingCommands && pendingCommands.length > 0) {
+            console.log(`[WS] Resending ${pendingCommands.length} pending commands to ${deviceId}`);
+            pendingCommands.forEach(cmd => {
+              ws.send(JSON.stringify({
+                type: 'command',
+                data: {
+                  command_id: cmd.command_id,
+                  command: cmd.command,
+                  timeout_ms: cmd.timeout_ms || 30000
+                }
+              }));
+              // 更新命令状态为已推送
+              global.commandService.updateCommandStatus(cmd.command_id, 'delivered_via_ws').catch(() => {});
+            });
+          }
+        }).catch(e => {
+          console.error('[WS] Failed to fetch pending commands:', e.message);
+        });
+      }
     } else {
       agentClients.add(ws);
     }
@@ -240,6 +263,18 @@ async function pushCommandToDevice(deviceId, command) { console.log("[WS] pushCo
   return { success: true };
 }
 
+// Send custom message to device via WebSocket
+function sendToDevice(deviceId, message) {
+  const ws = deviceClients.get(deviceId);
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.log(`[WS] Device ${deviceId} not connected, cannot send:`, message.type);
+    return false;
+  }
+  ws.send(JSON.stringify(message));
+  console.log(`[WS] Sent to ${deviceId}:`, message.type);
+  return true;
+}
+
 // Broadcast transfer progress to all agents
 function broadcastTransferProgress(transferId, progress) {
   const message = {
@@ -255,4 +290,4 @@ function broadcastTransferProgress(transferId, progress) {
   });
 }
 
-module.exports = { initWebSocket, pushCommandToDevice, broadcastToAgents, broadcastTransferProgress };
+module.exports = { initWebSocket, pushCommandToDevice, sendToDevice, broadcastToAgents, broadcastTransferProgress };

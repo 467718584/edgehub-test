@@ -1,6 +1,6 @@
 /**
  * TransferService - 分块传输服务 v2.0
- * 支持分块传输、断点续传、进度追踪
+ * 支持分块传输、断点续传、进度追踪、并行传输、队列管理
  */
 
 const fs = require('fs');
@@ -12,6 +12,134 @@ function generateId(prefix = '') {
   const timestamp = Date.now().toString(36);
   const random = Math.random().toString(36).substring(2, 10);
   return prefix ? `${prefix}_${timestamp}_${random}` : `${timestamp}_${random}`;
+}
+
+/**
+ * 传输队列管理器 v2.0
+ * 支持优先级、并行传输、队列管理
+ */
+class TransferQueue {
+  constructor(options = {}) {
+    this.maxConcurrent = options.maxConcurrent || 3;  // 最大并行传输数
+    this.maxParallelChunks = options.maxParallelChunks || 2;  // 每个传输最大并行块数
+    this.queue = [];  // 等待队列
+    this.activeTransfers = new Map();  // 正在传输的任务
+    this.transferPromises = new Map();  // 传输Promise跟踪
+  }
+
+  /**
+   * 添加传输任务到队列
+   */
+  addToQueue(transferTask) {
+    // 按优先级插入队列 (优先级高的在前)
+    const priority = transferTask.priority || 3;
+    let insertIndex = this.queue.findIndex(t => (t.priority || 3) < priority);
+    if (insertIndex === -1) insertIndex = this.queue.length;
+    
+    this.queue.splice(insertIndex, 0, {
+      ...transferTask,
+      queuedAt: Date.now()
+    });
+    
+    console.log(`[TransferQueue] 添加任务 ${transferTask.transferId} 到队列，优先级 ${priority}，队列位置 ${insertIndex + 1}/${this.queue.length + 1}`);
+    
+    return this.processQueue();
+  }
+
+  /**
+   * 处理队列
+   */
+  async processQueue() {
+    // 检查是否可以启动新传输
+    while (this.activeTransfers.size < this.maxConcurrent && this.queue.length > 0) {
+      const task = this.queue.shift();
+      this.startTransfer(task);
+    }
+  }
+
+  /**
+   * 启动传输任务
+   */
+  startTransfer(task) {
+    this.activeTransfers.set(task.transferId, {
+      ...task,
+      startedAt: Date.now(),
+      chunksInFlight: 0
+    });
+    
+    console.log(`[TransferQueue] 启动传输 ${task.transferId}，当前活动 ${this.activeTransfers.size}/${this.maxConcurrent}`);
+  }
+
+  /**
+   * 标记传输完成
+   */
+  completeTransfer(transferId, success = true) {
+    const transfer = this.activeTransfers.get(transferId);
+    if (transfer) {
+      const duration = Date.now() - transfer.startedAt;
+      console.log(`[TransferQueue] 传输 ${transferId} ${success ? '完成' : '失败'}，耗时 ${duration}ms`);
+      this.activeTransfers.delete(transferId);
+      this.transferPromises.delete(transferId);
+    }
+    
+    // 处理队列中的下一个
+    this.processQueue();
+  }
+
+  /**
+   * 获取队列状态
+   */
+  getQueueStatus() {
+    return {
+      activeTransfers: Array.from(this.activeTransfers.keys()),
+      queuedTransfers: this.queue.map(t => ({
+        transferId: t.transferId,
+        priority: t.priority,
+        queuedAt: t.queuedAt
+      })),
+      activeCount: this.activeTransfers.size,
+      queuedCount: this.queue.length,
+      maxConcurrent: this.maxConcurrent
+    };
+  }
+
+  /**
+   * 取消队列中的传输
+   */
+  cancelTransfer(transferId) {
+    // 从队列中移除
+    const queueIndex = this.queue.findIndex(t => t.transferId === transferId);
+    if (queueIndex !== -1) {
+      this.queue.splice(queueIndex, 1);
+      console.log(`[TransferQueue] 取消队列中的传输 ${transferId}`);
+      return true;
+    }
+    
+    // 从活动中移除
+    if (this.activeTransfers.has(transferId)) {
+      this.activeTransfers.delete(transferId);
+      console.log(`[TransferQueue] 取消活动传输 ${transferId}`);
+      this.processQueue();
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * 获取设备正在传输的任务
+   */
+  getDeviceTransfers(deviceId) {
+    const active = Array.from(this.activeTransfers.values())
+      .filter(t => t.deviceId === deviceId)
+      .map(t => t.transferId);
+    
+    const queued = this.queue
+      .filter(t => t.deviceId === deviceId)
+      .map(t => t.transferId);
+    
+    return { active, queued };
+  }
 }
 
 class TransferService {
@@ -30,6 +158,15 @@ class TransferService {
     
     // 传输进度回调
     this.progressCallbacks = new Map();
+    
+    // v2.0: 传输队列管理器
+    this.transferQueue = new TransferQueue({
+      maxConcurrent: 3,    // 最多3个并行传输任务
+      maxParallelChunks: 2  // 每个传输最多2个并行块
+    });
+    
+    // v2.0: 并行传输配置
+    this.maxParallelChunks = 2;  // 每个文件传输最多并行2个块
   }
   
   /**
@@ -146,6 +283,129 @@ class TransferService {
       chunk_size: chunkSize,
       file_size: fileSize
     };
+  }
+  
+  /**
+   * 开始推送传输 - 发送文件到设备
+   */
+  async startPushTransfer(transferId, deviceId) {
+    const transfer = await this.getTransfer(transferId);
+    if (!transfer) {
+      throw new Error('传输任务不存在');
+    }
+    
+    if (transfer.direction !== 'push') {
+      throw new Error('不是推送传输');
+    }
+    
+    // 更新状态为传输中
+    await this.updateTransferStatus(transferId, 'transferring');
+    
+    // 获取WebSocket服务
+    const wsService = global.wsService;
+    if (!wsService) {
+      throw new Error('WebSocket服务未初始化');
+    }
+    
+    // 发送transfer_start消息
+    wsService.sendToDevice(deviceId, {
+      type: 'transfer_start',
+      transfer_id: transferId,
+      file_name: transfer.file_name,
+      file_size: transfer.file_size,
+      total_chunks: transfer.total_chunks,
+      remote_path: transfer.remote_path
+    });
+    
+    // v2.0: 并行分块传输
+    const totalChunks = transfer.total_chunks;
+    const maxParallel = Math.min(this.maxParallelChunks, 3);  // 最多并行3个块
+    let chunkIndex = 0;
+    const pendingChunks = new Map();  // 正在传输的块
+    let lastChunkProcessed = false;
+    
+    // 获取下一个待传输的块索引
+    const getNextPendingChunkIndex = async () => {
+      // 先查找数据库中待传输的块
+      const rows = await this.db.all(`
+        SELECT chunk_index FROM transfer_chunks 
+        WHERE transfer_id = ? AND status = 'pending'
+        ORDER BY chunk_index
+        LIMIT ?
+      `, [transferId, maxParallel]);
+      return rows.map(r => r.chunk_index);
+    };
+    
+    // 处理单个块传输
+    const processChunk = async (idx) => {
+      try {
+        const chunkData = await this.getChunkData(transferId, idx);
+        
+        wsService.sendToDevice(deviceId, {
+          type: 'transfer_chunk',
+          transfer_id: transferId,
+          chunk_index: idx,
+          data: chunkData.data,
+          hash: chunkData.hash,
+          is_last: chunkData.is_last
+        });
+        
+        // 更新分块状态
+        await this.db.run(`
+          UPDATE transfer_chunks SET status = 'transferred', transferred_at = CURRENT_TIMESTAMP
+          WHERE transfer_id = ? AND chunk_index = ?
+        `, [transferId, idx]);
+        
+        // 更新传输进度
+        await this.db.run(`
+          UPDATE file_transfers SET transferred_chunks = transferred_chunks + 1, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `, [transferId]);
+        
+        // 通知进度
+        this.notifyProgress(transferId);
+        
+        // 如果是最后一块
+        if (chunkData.is_last) {
+          lastChunkProcessed = true;
+        }
+        
+        pendingChunks.delete(idx);
+        console.log(`[Transfer-${transferId}] Chunk ${idx}/${totalChunks} 并行发送完成`);
+        
+      } catch (e) {
+        console.error(`[Transfer-${transferId}] Chunk ${idx} failed:`, e.message);
+        pendingChunks.delete(idx);
+        throw e;
+      }
+    };
+    
+    // 并行控制循环
+    const sendChunksInParallel = async () => {
+      while (chunkIndex < totalChunks || pendingChunks.size > 0) {
+        // 填充并行槽位
+        while (pendingChunks.size < maxParallel && chunkIndex < totalChunks) {
+          const idx = chunkIndex++;
+          pendingChunks.set(idx, true);
+          processChunk(idx).catch(async (e) => {
+            await this.updateTransferStatus(transferId, 'failed', e.message);
+          });
+        }
+        
+        // 等待至少一个块完成
+        if (pendingChunks.size > 0) {
+          await new Promise(r => setTimeout(r, 50));
+        }
+      }
+    };
+    
+    // 等待所有块完成
+    await sendChunksInParallel();
+    
+    // 所有块发送完成后，标记传输完成
+    await this.updateTransferStatus(transferId, 'completed');
+    
+    return { success: true, total_chunks: totalChunks };
   }
   
   /**
@@ -704,6 +964,64 @@ class TransferService {
       file_size: transfer.file_size,
       download_url: `/api/v1/transfers/${transferId}/download`
     };
+  }
+
+  // ========== v2.0 队列管理方法 ==========
+
+  /**
+   * 获取传输队列状态
+   */
+  getQueueStatus() {
+    return this.transferQueue.getQueueStatus();
+  }
+
+  /**
+   * 修改传输优先级
+   */
+  async updateTransferPriority(transferId, newPriority) {
+    // 更新数据库中的优先级
+    await this.db.run(`
+      UPDATE file_transfers SET priority = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [newPriority, transferId]);
+    
+    return {
+      success: true,
+      transfer_id: transferId,
+      new_priority: newPriority
+    };
+  }
+
+  /**
+   * 取消队列中的传输
+   */
+  async cancelQueuedTransfer(transferId) {
+    // 先检查传输是否存在
+    const transfer = await this.getTransfer(transferId);
+    if (!transfer) {
+      throw new Error('传输任务不存在');
+    }
+    
+    // 如果传输正在进行，也取消它
+    if (['pending', 'transferring'].includes(transfer.status)) {
+      await this.cancelTransfer(transferId);
+    }
+    
+    // 从队列中移除
+    const cancelled = this.transferQueue.cancelTransfer(transferId);
+    
+    return {
+      success: true,
+      transfer_id: transferId,
+      removed_from_queue: cancelled
+    };
+  }
+
+  /**
+   * 获取设备的传输队列信息
+   */
+  getDeviceQueueInfo(deviceId) {
+    return this.transferQueue.getDeviceTransfers(deviceId);
   }
 }
 

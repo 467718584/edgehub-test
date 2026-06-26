@@ -156,6 +156,38 @@ class Database {
     `);
   }
   
+  // ========== 通用SQL执行 ==========
+  
+  // 执行SQL语句（用于DDL）
+  run(sql, params = []) {
+    return new Promise((resolve, reject) => {
+      this.db.run(sql, params, function(err) {
+        if (err) reject(err);
+        else resolve({ changes: this.changes, lastInsertRowid: this.lastInsertRowid });
+      });
+    });
+  }
+  
+  // 查询单条记录
+  get(sql, params = []) {
+    return new Promise((resolve, reject) => {
+      this.db.get(sql, params, (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+  }
+  
+  // 查询多条记录
+  all(sql, params = []) {
+    return new Promise((resolve, reject) => {
+      this.db.all(sql, params, (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      });
+    });
+  }
+  
   // ========== 设备相关操作 ==========
   
   createDevice(device) {

@@ -140,6 +140,23 @@ class CommandQueueService {
     await this.db.updateCommandStatus(commandId, 'cancelled');
     return { success: true };
   }
+  
+  // 获取设备的pending命令（用于重连后推送）
+  async getPendingCommandsForDevice(deviceId) {
+    return await this.db.all(`
+      SELECT command_id, command, timeout_ms, priority, created_at 
+      FROM commands 
+      WHERE device_id = ? AND status = 'pending' 
+      ORDER BY id ASC
+    `, [deviceId]);
+  }
+  
+  // 更新命令状态
+  async updateCommandStatus(commandId, status) {
+    await this.db.run(`
+      UPDATE commands SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE command_id = ?
+    `, [status, commandId]);
+  }
 }
 
 module.exports = CommandQueueService;

@@ -55,17 +55,22 @@ router.post('/transfers', async (req, res, next) => {
       });
     }
     
-    // 计算文件哈希(如果需要)
+    // 计算文件大小和哈希(如果需要)
     let hash = file_hash;
-    if (!hash && local_path) {
+    let size = file_size || 0;
+    if (local_path) {
       try {
         const fs = require('fs');
         if (fs.existsSync(local_path)) {
-          const fileContent = fs.readFileSync(local_path);
-          hash = crypto.createHash('sha256').update(fileContent).digest('hex');
+          const stats = fs.statSync(local_path);
+          size = stats.size;
+          if (!hash) {
+            const fileContent = fs.readFileSync(local_path);
+            hash = crypto.createHash('sha256').update(fileContent).digest('hex');
+          }
         }
       } catch (e) {
-        console.error('计算文件哈希失败:', e);
+        console.error('计算文件信息失败:', e);
       }
     }
     
@@ -76,10 +81,22 @@ router.post('/transfers', async (req, res, next) => {
       localPath: local_path,
       remotePath: remote_path,
       fileName: file_name || path.basename(remote_path),
-      fileSize: file_size || 0,
+      fileSize: size,
       fileHash: hash,
       priority: priority || 3
     });
+    
+    // 如果是push模式，立即开始发送文件
+    if (direction === 'push' && result.total_chunks > 0) {
+      // 异步发送文件，不阻塞响应
+      setImmediate(async () => {
+        try {
+          await transferService.startPushTransfer(result.transfer_id, device_id);
+        } catch (e) {
+          console.error('[Transfer] Start push failed:', e.message);
+        }
+      });
+    }
     
     res.json({
       success: true,
@@ -260,6 +277,82 @@ router.get('/stats', async (req, res, next) => {
     res.json({
       success: true,
       data: stats,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ========== v2.0 队列管理API ==========
+
+/**
+ * GET /api/v1/files/queue
+ * 获取传输队列状态
+ */
+router.get('/queue', async (req, res, next) => {
+  try {
+    const queueStatus = transferService.getQueueStatus();
+    
+    res.json({
+      success: true,
+      data: queueStatus,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/v1/files/queue/priority
+ * 修改传输优先级
+ */
+router.post('/queue/priority', async (req, res, next) => {
+  try {
+    const { transfer_id, priority } = req.body;
+    
+    if (!transfer_id || priority === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_PARAMS', message: 'transfer_id和priority为必填' },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    if (priority < 1 || priority > 5) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_PARAMS', message: 'priority必须在1-5之间' },
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    const result = await transferService.updateTransferPriority(transfer_id, priority);
+    
+    res.json({
+      success: true,
+      data: result,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * DELETE /api/v1/files/queue/:transferId
+ * 从队列取消传输
+ */
+router.delete('/queue/:transferId', async (req, res, next) => {
+  try {
+    const { transferId } = req.params;
+    
+    const result = await transferService.cancelQueuedTransfer(transferId);
+    
+    res.json({
+      success: true,
+      data: result,
       timestamp: new Date().toISOString()
     });
   } catch (error) {

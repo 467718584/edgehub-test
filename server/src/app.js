@@ -65,6 +65,7 @@ setAuthDatabase(db);
 
 // 设置全局变量供ws-server.js使用
 global.transferService = transferService;
+global.commandService = commandQueueService;
 
 // 创建Express应用
 const app = express();
@@ -179,8 +180,11 @@ const server = app.listen(config.port, '0.0.0.0', () => {
 });
 
 // Initialize WebSocket
-const { broadcastTransferProgress } = initWebSocket(server);
-setWsService({ broadcastTransferProgress });
+const wsExport = initWebSocket(server);
+setWsService(wsExport);
+// 导出ws-server的函数到global供transferService使用
+const { sendToDevice } = require('./utils/ws-server');
+global.wsService = { ...wsExport, sendToDevice };
 // Start sysinfo polling for all online devices
 const { startSysinfoPolling } = require('./services/sysinfoPolling');
 startSysinfoPolling(60000); // 1 minute
