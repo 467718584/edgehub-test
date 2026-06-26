@@ -482,7 +482,7 @@ router.get('/transfers/:transferId/download', async (req, res, next) => {
 router.post('/:deviceId/files/push', upload.single('file'), async (req, res, next) => {
   try {
     const { deviceId } = req.params;
-    const { remote_path } = req.body;
+    const { remote_path, project_id } = req.body;
     
     if (!req.file) {
       return res.status(400).json({
@@ -501,7 +501,15 @@ router.post('/:deviceId/files/push', upload.single('file'), async (req, res, nex
     }
     
     const localFile = req.file.path;
-    const result = await transferService.pushFileLegacy(deviceId, localFile, remote_path);
+    const result = await transferService.pushFileLegacy(deviceId, localFile, remote_path, project_id ? parseInt(project_id) : null);
+    
+    // 记录到开发日志
+    if (devLogger && project_id) {
+      devLogger.logFileTransfer(deviceId, remote_path, 'push', {
+        success: true,
+        file_size: req.file.size
+      }, parseInt(project_id));
+    }
     
     res.json({
       success: true,

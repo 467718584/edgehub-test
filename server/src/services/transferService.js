@@ -1030,7 +1030,7 @@ class TransferService {
   /**
    * v1.0 兼容: 推送文件到设备 (单文件整体推送)
    */
-  async pushFileLegacy(deviceId, localFilePath, remotePath) {
+  async pushFileLegacy(deviceId, localFilePath, remotePath, projectId = null) {
     // 获取设备信息
     const device = await this.db.getDevice(deviceId);
     if (!device) {
@@ -1052,6 +1052,7 @@ class TransferService {
     
     // 创建传输任务
     const transfer = await this.createTransfer({
+      projectId,
       deviceId,
       direction: 'push',
       localPath: localFilePath,
@@ -1075,7 +1076,7 @@ class TransferService {
   /**
    * v1.0 兼容: 从设备拉取文件
    */
-  async pullFileLegacy(deviceId, remotePath, localPath) {
+  async pullFileLegacy(deviceId, remotePath, localPath, projectId = null) {
     // 获取设备信息
     const device = await this.db.getDevice(deviceId);
     if (!device) {
@@ -1090,6 +1091,7 @@ class TransferService {
     
     // 创建传输任务
     const transfer = await this.initiatePullTransfer({
+      projectId,
       deviceId,
       remotePath,
       localPath,
