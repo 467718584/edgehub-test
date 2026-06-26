@@ -141,11 +141,11 @@ class CommandExecutor:
         if command.strip().lower() == 'date':
             return 'powershell -Command "Get-Date -Format yyyy/MM/dd HH:mm:ss"'
         # 如果命令包含 && date，在PowerShell中执行
-        if '&&' in command and 'date' in command.lower():
-            # 替换命令中的 date 为 PowerShell Get-Date
-            import re
-            # 匹配独立的 date 命令
-            command = re.sub(r'\bdate\b', 'powershell -Command "Get-Date -Format \'yyyy/MM/dd HH:mm:ss\'"', command, flags=re.IGNORECASE)
+        # 匹配独立的 date 命令 (前后有分隔符)，但不匹配 Get-Date 中的 date
+        if re.search(r'(?:^|[\s&&|;])date\b(?!-)', command, re.IGNORECASE):
+            command = re.sub(r'(?:^|[\s&&|;])date\b(?!-)', 
+                              r'\1powershell -Command "Get-Date -Format yyyy/MM/dd HH:mm:ss"', 
+                              command, flags=re.IGNORECASE)
         return command
     
     def _decode_output(self, data):
