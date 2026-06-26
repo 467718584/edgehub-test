@@ -131,24 +131,60 @@ class SysInfo:
 class CommandExecutor:
     def __init__(self):
         self.workdir = os.environ.get('TEMP', 'C:\\Temp')
+        # 自动检测Windows默认编码，优先使用GBK/GB2312
+        import locale
+        self.default_encoding = locale.getpreferredencoding(False) or 'gbk'
+    
+    def _preprocess_command(self, command):
+        """预处理命令，解决Windows特定命令兼容性问题"""
+        # Windows date 命令在中文环境下会等待输入，自动替换为PowerShell版本
+        if command.strip().lower() == 'date':
+            return 'powershell -Command "Get-Date -Format yyyy/MM/dd HH:mm:ss"'
+        # 如果命令包含 && date，在PowerShell中执行
+        if '&&' in command and 'date' in command.lower():
+            # 替换命令中的 date 为 PowerShell Get-Date
+            import re
+            # 匹配独立的 date 命令
+            command = re.sub(r'\bdate\b', 'powershell -Command "Get-Date -Format \'yyyy/MM/dd HH:mm:ss\'"', command, flags=re.IGNORECASE)
+        return command
+    
+    def _decode_output(self, data):
+        """智能解码输出，自动尝试多种编码"""
+        if not data:
+            return ''
+        if isinstance(data, str):
+            return data
+        # 尝试多种编码
+        encodings = [self.default_encoding, 'gbk', 'gb2312', 'utf-8', 'latin-1']
+        for enc in encodings:
+            try:
+                return data.decode(enc)
+            except (UnicodeDecodeError, AttributeError):
+                continue
+        # 最后使用errors='replace'防止崩溃
+        return data.decode('utf-8', errors='replace')
     
     def execute(self, command, timeout=30000):
         start_time = time.time()
         result = {'success': False, 'stdout': '', 'stderr': '', 'exit_code': -1, 'duration_ms': 0}
         
+        # 预处理命令
+        command = self._preprocess_command(command)
+        
         try:
+            # 使用二进制模式，手动解码解决编码问题
             proc = subprocess.Popen(
                 command, shell=True,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                cwd=self.workdir, text=True
+                cwd=self.workdir
             )
             
             try:
                 stdout, stderr = proc.communicate(timeout=timeout/1000)
                 elapsed = (time.time() - start_time) * 1000
                 result['success'] = proc.returncode == 0
-                result['stdout'] = stdout
-                result['stderr'] = stderr
+                result['stdout'] = self._decode_output(stdout)
+                result['stderr'] = self._decode_output(stderr)
                 result['exit_code'] = proc.returncode
                 result['duration_ms'] = int(elapsed)
             except subprocess.TimeoutExpired:
@@ -156,7 +192,7 @@ class CommandExecutor:
                 stdout, stderr = proc.communicate()
                 elapsed = (time.time() - start_time) * 1000
                 result['success'] = False
-                result['stdout'] = stdout
+                result['stdout'] = self._decode_output(stdout)
                 result['stderr'] = f"命令执行超时 ({timeout/1000}秒)"
                 result['exit_code'] = -1
                 result['duration_ms'] = int(elapsed)
@@ -250,7 +286,7 @@ class WSClient:
     
     def send(self, data):
         try:
-            self.ws.send(json.dumps(data))
+            self.ws.send(json.dumps(data, ensure_ascii=False))
             return True
         except Exception:
             return False
@@ -602,7 +638,7 @@ class EdgeAgent:
                 'stderr': result['stderr'],
                 'exit_code': result['exit_code'],
                 'duration_ms': result['duration_ms']
-            }))
+            }, ensure_ascii=False))
         except Exception as e:
             log(f"[WS] Send result failed: {e}", "ERROR")
     
