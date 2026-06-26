@@ -15,7 +15,7 @@ const DevelopmentLogger = require('./services/developmentLogger');
 const { errorHandler } = require('./middlewares/errorHandler');
 const { router: devicesRouter, setDeviceService } = require('./routes/devices');
 const { router: execRouter, setExecService, setDatabase } = require('./routes/exec');
-const { router: filesRouter, setTransferService, setWsService } = require('./routes/files');
+const { router: filesRouter, setTransferService, setWsService, setDevLogger } = require('./routes/files');
 const TransferService = require('./services/transferService');
 const { router: commandsRouter, setCommandQueueService } = require('./routes/commands');
 const projectsRouter = require('./routes/projects');
@@ -182,6 +182,8 @@ const server = app.listen(config.port, '0.0.0.0', () => {
 // Initialize WebSocket
 const wsExport = initWebSocket(server);
 setWsService(wsExport);
+// 设置文件传输的开发日志记录器
+setDevLogger(globalDevLogger);
 // 导出ws-server的函数到global供transferService使用
 const { sendToDevice } = require('./utils/ws-server');
 global.wsService = { ...wsExport, sendToDevice };

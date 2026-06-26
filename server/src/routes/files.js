@@ -11,6 +11,7 @@ const path = require('path');
 
 let transferService;
 let wsService;
+let devLogger;
 
 // 配置multer用于文件上传
 const upload = multer({
@@ -26,6 +27,10 @@ function setTransferService(service) {
 
 function setWsService(service) {
   wsService = service;
+}
+
+function setDevLogger(logger) {
+  devLogger = logger;
 }
 
 // ========== v2.0 传输API ==========
@@ -92,10 +97,33 @@ router.post('/transfers', async (req, res, next) => {
       setImmediate(async () => {
         try {
           await transferService.startPushTransfer(result.transfer_id, device_id);
+          
+          // 记录到开发日志
+          if (devLogger && project_id) {
+            devLogger.logFileTransfer(device_id, remote_path, 'push', {
+              success: true,
+              file_size: size
+            }, project_id);
+          }
         } catch (e) {
           console.error('[Transfer] Start push failed:', e.message);
+          
+          // 记录失败到开发日志
+          if (devLogger && project_id) {
+            devLogger.logFileTransfer(device_id, remote_path, 'push', {
+              success: false
+            }, project_id);
+          }
         }
       });
+    } else if (direction === 'pull') {
+      // Pull模式会在transfer完成时记录
+      if (devLogger && project_id) {
+        devLogger.logFileTransfer(device_id, remote_path, 'pull', {
+          success: true,
+          file_size: 0
+        }, project_id);
+      }
     }
     
     res.json({
@@ -517,5 +545,6 @@ router.get('/:deviceId/files/pull', async (req, res, next) => {
 module.exports = {
   router,
   setTransferService,
-  setWsService
+  setWsService,
+  setDevLogger
 };

@@ -290,6 +290,68 @@ router.put('/projects/:projectId/debugs/:debugId', authMiddleware, async (req, r
   }
 });
 
+// ========== 项目文件传输 ==========
+
+// 获取项目的文件传输历史
+router.get('/projects/:projectId/transfers', authMiddleware, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const { status, direction, limit = 50 } = req.query;
+    
+    // 验证项目存在
+    const project = await db.getProject(parseInt(projectId));
+    if (!project) {
+      return res.status(404).json({ success: false, error: 'Project not found' });
+    }
+    
+    // 从 file_transfers 表获取项目关联的传输记录
+    const transfers = await db.all(`
+      SELECT * FROM file_transfers 
+      WHERE project_id = ? 
+      ${status ? " AND status = '" + status + "'" : ''}
+      ${direction ? " AND direction = '" + direction + "'" : ''}
+      ORDER BY created_at DESC 
+      LIMIT ?
+    `, [parseInt(projectId), parseInt(limit)]);
+    
+    res.json({
+      success: true,
+      data: transfers,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 获取项目的文件传输统计
+router.get('/projects/:projectId/transfers/stats', authMiddleware, async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    
+    const stats = await db.get(`
+      SELECT 
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+        SUM(CASE WHEN status IN ('pending', 'transferring') THEN 1 ELSE 0 END) as in_progress,
+        SUM(file_size) as total_bytes,
+        SUM(CASE WHEN direction = 'push' THEN 1 ELSE 0 END) as push_count,
+        SUM(CASE WHEN direction = 'pull' THEN 1 ELSE 0 END) as pull_count
+      FROM file_transfers 
+      WHERE project_id = ?
+    `, [parseInt(projectId)]);
+    
+    res.json({
+      success: true,
+      data: stats,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ========== 统计 ==========
 
 // 获取总体统计

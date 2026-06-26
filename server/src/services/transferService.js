@@ -772,13 +772,14 @@ class TransferService {
     const chunkSize = this.defaultChunkSize;
     
     // 在EdgeHub上创建目标文件路径
-    if (!localPath) {
+    let finalLocalPath = localPath;
+    if (!finalLocalPath) {
       const filename = fileName || path.basename(remotePath);
-      localPath = path.join(this.uploadDir, `${transferId}_${filename}`);
+      finalLocalPath = path.join(this.uploadDir, `${transferId}_${filename}`);
     }
     
     // 确保目录存在
-    const localDir = path.dirname(localPath);
+    const localDir = path.dirname(finalLocalPath);
     if (!fs.existsSync(localDir)) {
       fs.mkdirSync(localDir, { recursive: true });
     }
@@ -788,7 +789,7 @@ class TransferService {
       INSERT INTO file_transfers 
       (id, project_id, device_id, direction, local_path, remote_path, file_name, status, chunk_size, priority, total_chunks, file_size)
       VALUES (?, ?, ?, 'pull', ?, ?, ?, 'initiating', ?, ?, 0, 0)
-    `, [transferId, projectId || null, deviceId, localPath, remotePath, fileName || path.basename(remotePath), chunkSize, priority]);
+    `, [transferId, projectId || null, deviceId, finalLocalPath, remotePath, fileName || path.basename(remotePath), chunkSize, priority]);
     
     // 创建初始块记录占位 (实际数量在EdgeAgent返回后更新)
     // 注意: 块记录在实际接收时创建
@@ -797,7 +798,7 @@ class TransferService {
       transfer_id: transferId,
       status: 'initiating',
       remote_path: remotePath,
-      local_path: localPath
+      local_path: finalLocalPath
     };
   }
   
