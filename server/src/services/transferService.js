@@ -1023,6 +1023,84 @@ class TransferService {
   getDeviceQueueInfo(deviceId) {
     return this.transferQueue.getDeviceTransfers(deviceId);
   }
+
+  // ========== v1.0 兼容方法 ==========
+
+  /**
+   * v1.0 兼容: 推送文件到设备 (单文件整体推送)
+   */
+  async pushFileLegacy(deviceId, localFilePath, remotePath) {
+    // 获取设备信息
+    const device = await this.db.getDevice(deviceId);
+    if (!device) {
+      throw new Error('设备不存在');
+    }
+    
+    if (device.status !== 'online') {
+      throw new Error('设备不在线');
+    }
+    
+    // 检查文件是否存在
+    if (!fs.existsSync(localFilePath)) {
+      throw new Error('本地文件不存在');
+    }
+    
+    const fileStats = fs.statSync(localFilePath);
+    const fileName = path.basename(localFilePath);
+    const fileHash = await this.calculateFileHash(localFilePath);
+    
+    // 创建传输任务
+    const transfer = await this.createTransfer({
+      deviceId,
+      direction: 'push',
+      localPath: localFilePath,
+      remotePath,
+      fileName,
+      fileSize: fileStats.size,
+      fileHash
+    });
+    
+    // 直接开始推送 (使用WebSocket)
+    await this.startPushTransfer(transfer.transfer_id, deviceId);
+    
+    return {
+      transfer_id: transfer.transfer_id,
+      file_name: fileName,
+      file_size: fileStats.size,
+      status: 'completed'
+    };
+  }
+
+  /**
+   * v1.0 兼容: 从设备拉取文件
+   */
+  async pullFileLegacy(deviceId, remotePath, localPath) {
+    // 获取设备信息
+    const device = await this.db.getDevice(deviceId);
+    if (!device) {
+      throw new Error('设备不存在');
+    }
+    
+    if (device.status !== 'online') {
+      throw new Error('设备不在线');
+    }
+    
+    const fileName = path.basename(remotePath);
+    
+    // 创建传输任务
+    const transfer = await this.initiatePullTransfer({
+      deviceId,
+      remotePath,
+      localPath,
+      fileName
+    });
+    
+    return {
+      transfer_id: transfer.transfer_id,
+      file_name: fileName,
+      status: transfer.status
+    };
+  }
 }
 
 module.exports = TransferService;
