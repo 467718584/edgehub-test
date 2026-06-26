@@ -582,8 +582,10 @@ class EdgeAgent:
     
     def handle_command(self, cmd):
         """执行命令（异步，不阻塞WebSocket主线程）"""
-        command_id = cmd.get('command_id')
-        command = cmd.get('command', '')
+        # 注意：消息格式是 {"type": "command", "data": {"command_id": "...", "command": "..."}}
+        data = cmd.get('data', {}) if isinstance(cmd, dict) else cmd
+        command_id = data.get('command_id') if isinstance(data, dict) else None
+        command = data.get('command', '') if isinstance(data, dict) else str(cmd)
         timeout = cmd.get('timeout_ms', 30000)
         
         log(f"[CMD] {command_id}: {command[:80]}...")
