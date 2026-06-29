@@ -1,0 +1,22 @@
+{
+  "name": "edgehub",
+  "version": "1.0.0",
+  "description": "EdgeHub - 边缘设备管理系统控制节点",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "node --watch src/app.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.2.2",
+    "cors": "^2.8.6",
+    "express": "^4.22.2",
+    "multer": "^1.4.5-lts.1",
+    "sqlite3": "^5.1.7",
+    "ssh2": "^1.14.0",
+    "ws": "^8.21.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

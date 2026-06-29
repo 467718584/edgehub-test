@@ -1,0 +1,134 @@
+const WebSocket = require('ws');
+
+const deviceClients = new Map();
+const agentClients = new Set();
+
+function initWebSocket(server) {
+  const wss = new WebSocket.Server({ noServer: true });
+
+  // Handle HTTP Upgrade for /ws path
+  server.on('upgrade', (req, socket, head) => {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    if (url.pathname === '/ws') {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit('connection', ws, req);
+      });
+    } else {
+      socket.destroy();
+    }
+  });
+
+  const heartbeatInterval = setInterval(() => {
+    wss.clients.forEach((ws) => {
+      if (ws.isAlive === false) {
+        for (const [deviceId, client] of deviceClients.entries()) {
+          if (client === ws) {
+            deviceClients.delete(deviceId);
+            // Mark device as offline when WS connection dies
+            if (global.db) {
+              global.db.updateDeviceStatus(deviceId, 'offline').catch(() => {});
+            }
+            break;
+          }
+        }
+        return ws.terminate();
+      }
+      ws.isAlive = false;
+      ws.ping();
+    });
+  }, 30000);
+
+  wss.on('close', () => clearInterval(heartbeatInterval));
+
+  wss.on('connection', (ws, req) => {
+    ws.isAlive = true;
+    const url = new URL(req.url, 'http://localhost');
+    const deviceId = url.searchParams.get('device_id');
+    const apiKey = url.searchParams.get('api_key');
+    const clientType = url.searchParams.get('type') || 'device';
+
+    console.log('[WS] New connection:', { deviceId, clientType });
+
+    if (clientType === 'device') {
+      if (apiKey !== 'edgehub_secret_key') {
+        ws.close(4001, 'Invalid API key'); return;
+      }
+      if (!deviceId) { ws.close(4002, 'Missing device_id'); return; }
+      
+      deviceClients.set(deviceId, ws);
+      console.log('[WS] Device connected:', deviceId);
+      ws.send(JSON.stringify({ type: 'connected', device_id: deviceId }));
+      
+      // Update device status to online when WS connects
+      if (global.db) {
+        global.db.updateDeviceStatus(deviceId, 'online').catch(() => {});
+      }
+    } else {
+      agentClients.add(ws);
+    }
+
+    ws.on('message', async (data) => {
+      try {
+        const msg = JSON.parse(data);
+        if (msg.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong' }));
+          // Heartbeat ping - update device last_heartbeat
+          if (deviceId && global.db) {
+            global.db.updateDeviceStatus(deviceId, 'online').catch(() => {});
+          }
+        } else if (msg.type === 'command_result') {
+          // Device reported command result - update DB
+          if (global.db && msg.command_id) {
+            const status = msg.success ? 'completed' : 'failed';
+            global.db.updateCommandStatus(msg.command_id, status, {
+              stdout: msg.output || '',
+              stderr: msg.error || '',
+              exit_code: msg.success ? 0 : -1,
+              duration_ms: msg.duration_ms || 0
+            }).catch(e => console.error('[WS] Failed to update command result:', e.message));
+          }
+          broadcastToAgents({ type: 'command_result', device_id: deviceId, ...msg });
+        } else if (msg.type === 'device_status') {
+          broadcastToAgents({ type: 'device_status_update', device_id: deviceId, ...msg });
+        }
+      } catch (e) {
+        ws.send(JSON.stringify({ type: 'error', message: e.message }));
+      }
+    });
+
+    ws.on('pong', () => { ws.isAlive = true; });
+    ws.on('close', () => {
+      console.log('[WS] Device disconnected:', deviceId);
+      if (deviceId) {
+        deviceClients.delete(deviceId);
+        // Mark device offline when WS connection closes
+        if (global.db) {
+          global.db.updateDeviceStatus(deviceId, 'offline').catch(() => {});
+        }
+      }
+      agentClients.delete(ws);
+    });
+  });
+
+  console.log('[WS] WebSocket server initialized on /ws');
+  return wss;
+}
+
+function broadcastToAgents(message) {
+  const msgStr = JSON.stringify(message);
+  agentClients.forEach((ws) => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(msgStr);
+  });
+}
+
+// Push command to device via WebSocket (WS mode - primary)
+async function pushCommandToDevice(deviceId, command) {
+  const ws = deviceClients.get(deviceId);
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    return { success: false, error: 'Device not connected via WS' };
+  }
+  ws.send(JSON.stringify({ type: 'execute_command', ...command }));
+  return { success: true };
+}
+
+module.exports = { initWebSocket, pushCommandToDevice, broadcastToAgents };

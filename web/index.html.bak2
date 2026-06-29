@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EdgeHub - 边缘设备管理系统</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 侧边栏 -->
+    <aside class="sidebar">
+      <div class="logo">
+        <h1>⚡ EdgeHub</h1>
+        <p>边缘设备管理系统</p>
+      </div>
+      
+      <nav class="nav-menu">
+        <a href="#dashboard" class="nav-item active" data-page="dashboard">
+          <span class="icon">📊</span> 总览
+        </a>
+        <a href="#devices" class="nav-item" data-page="devices">
+          <span class="icon">🖥️</span> 设备列表
+        </a>
+        <a href="#projects" class="nav-item" data-page="projects">
+          <span class="icon">📁</span> 项目
+        </a>
+        <a href="#logs" class="nav-item" data-page="logs">
+          <span class="icon">📝</span> 开发记录
+        </a>
+      </nav>
+      
+      <div class="sidebar-footer">
+        <p>v2.0.0 - WireGuard VPN</p>
+      </div>
+    </aside>
+    
+    <!-- 主内容区 -->
+    <main class="main-content">
+      <!-- 顶部栏 -->
+      <header class="top-bar">
+        <h2 id="page-title">系统概览</h2>
+        <div class="top-bar-actions">
+          <button class="btn btn-primary" onclick="showCreateProjectModal()">+ 新建项目</button>
+        </div>
+      </header>
+      
+      <!-- 内容区域 -->
+      <div class="content-area" id="content-area">
+        <!-- 概览页面 -->
+        <div id="page-dashboard" class="page active">
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-icon">🖥️</div>
+              <div class="stat-info">
+                <div class="stat-value" id="stat-devices">-</div>
+                <div class="stat-label">设备总数</div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon">📁</div>
+              <div class="stat-info">
+                <div class="stat-value" id="stat-projects">-</div>
+                <div class="stat-label">项目总数</div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon">📝</div>
+              <div class="stat-info">
+                <div class="stat-value" id="stat-logs">-</div>
+                <div class="stat-label">开发记录</div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon">🐛</div>
+              <div class="stat-info">
+                <div class="stat-value" id="stat-issues">-</div>
+                <div class="stat-label">待解决问题</div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="dashboard-grid">
+            <div class="card">
+              <h3>📁 活跃项目</h3>
+              <div id="active-projects-list" class="list-container">
+                <p class="loading">加载中...</p>
+              </div>
+            </div>
+            <div class="card">
+              <h3>📝 最近开发记录</h3>
+              <div id="recent-logs-list" class="list-container">
+                <p class="loading">加载中...</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 设备列表页面 -->
+        <div id="page-devices" class="page">
+          <div class="device-list" id="device-list">
+            <p class="loading">加载中...</p>
+          </div>
+        </div>
+        
+        <!-- 项目页面 -->
+        <div id="page-projects" class="page">
+          <div class="projects-grid" id="projects-list">
+            <p class="loading">加载中...</p>
+          </div>
+        </div>
+        
+        <!-- 开发记录页面 -->
+        <div id="page-logs" class="page">
+          <div class="logs-container" id="logs-container">
+            <p class="loading">加载中...</p>
+          </div>
+        </div>
+        
+        <!-- 设备详情页面 -->
+        <div id="page-device-detail" class="page">
+          <button class="btn btn-secondary" onclick="navigateTo('devices')">← 返回设备列表</button>
+          <div id="device-detail-content"></div>
+        </div>
+        
+        <!-- 项目详情页面 -->
+        <div id="page-project-detail" class="page">
+          <button class="btn btn-secondary" onclick="navigateTo('projects')">← 返回项目列表</button>
+          <div id="project-detail-content"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+  
+  <!-- 创建项目弹窗 -->
+  <div id="create-project-modal" class="modal">
+    <div class="modal-content">
+      <h3>创建新项目</h3>
+      <form id="create-project-form">
+        <div class="form-group">
+          <label>选择设备</label>
+          <select id="project-device" required>
+            <option value="">请选择设备</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>项目名称</label>
+          <input type="text" id="project-name" required placeholder="例如: SLSD视觉系统">
+        </div>
+        <div class="form-group">
+          <label>项目路径</label>
+          <input type="text" id="project-path" required placeholder="例如: /home/ubuntu/slsd-vision">
+        </div>
+        <div class="form-group">
+          <label>描述（可选）</label>
+          <textarea id="project-description" placeholder="项目描述"></textarea>
+        </div>
+        <div class="form-group">
+          <label>优先级 (1-10, 1最高)</label>
+          <input type="number" id="project-priority" min="1" max="10" value="5">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
+          <button type="submit" class="btn btn-primary">创建</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
