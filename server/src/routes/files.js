@@ -11,7 +11,6 @@ const path = require('path');
 
 let transferService;
 let wsService;
-let devLogger;
 
 // 配置multer用于文件上传
 const upload = multer({
@@ -27,10 +26,6 @@ function setTransferService(service) {
 
 function setWsService(service) {
   wsService = service;
-}
-
-function setDevLogger(logger) {
-  devLogger = logger;
 }
 
 // ========== v2.0 传输API ==========
@@ -97,33 +92,10 @@ router.post('/transfers', async (req, res, next) => {
       setImmediate(async () => {
         try {
           await transferService.startPushTransfer(result.transfer_id, device_id);
-          
-          // 记录到开发日志
-          if (devLogger && project_id) {
-            devLogger.logFileTransfer(device_id, remote_path, 'push', {
-              success: true,
-              file_size: size
-            }, project_id);
-          }
         } catch (e) {
           console.error('[Transfer] Start push failed:', e.message);
-          
-          // 记录失败到开发日志
-          if (devLogger && project_id) {
-            devLogger.logFileTransfer(device_id, remote_path, 'push', {
-              success: false
-            }, project_id);
-          }
         }
       });
-    } else if (direction === 'pull') {
-      // Pull模式会在transfer完成时记录
-      if (devLogger && project_id) {
-        devLogger.logFileTransfer(device_id, remote_path, 'pull', {
-          success: true,
-          file_size: 0
-        }, project_id);
-      }
     }
     
     res.json({
@@ -296,7 +268,7 @@ router.get('/transfers', async (req, res, next) => {
  * GET /api/v1/files/stats
  * 获取传输统计
  */
-router.get('/stats', async (req, res, next) => {
+router.get('/transfers/stats', async (req, res, next) => {
   try {
     const { device_id } = req.query;
     
@@ -305,82 +277,6 @@ router.get('/stats', async (req, res, next) => {
     res.json({
       success: true,
       data: stats,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-// ========== v2.0 队列管理API ==========
-
-/**
- * GET /api/v1/files/queue
- * 获取传输队列状态
- */
-router.get('/queue', async (req, res, next) => {
-  try {
-    const queueStatus = transferService.getQueueStatus();
-    
-    res.json({
-      success: true,
-      data: queueStatus,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * POST /api/v1/files/queue/priority
- * 修改传输优先级
- */
-router.post('/queue/priority', async (req, res, next) => {
-  try {
-    const { transfer_id, priority } = req.body;
-    
-    if (!transfer_id || priority === undefined) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'INVALID_PARAMS', message: 'transfer_id和priority为必填' },
-        timestamp: new Date().toISOString()
-      });
-    }
-    
-    if (priority < 1 || priority > 5) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'INVALID_PARAMS', message: 'priority必须在1-5之间' },
-        timestamp: new Date().toISOString()
-      });
-    }
-    
-    const result = await transferService.updateTransferPriority(transfer_id, priority);
-    
-    res.json({
-      success: true,
-      data: result,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * DELETE /api/v1/files/queue/:transferId
- * 从队列取消传输
- */
-router.delete('/queue/:transferId', async (req, res, next) => {
-  try {
-    const { transferId } = req.params;
-    
-    const result = await transferService.cancelQueuedTransfer(transferId);
-    
-    res.json({
-      success: true,
-      data: result,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -482,7 +378,7 @@ router.get('/transfers/:transferId/download', async (req, res, next) => {
 router.post('/:deviceId/files/push', upload.single('file'), async (req, res, next) => {
   try {
     const { deviceId } = req.params;
-    const { remote_path, project_id } = req.body;
+    const { remote_path } = req.body;
     
     if (!req.file) {
       return res.status(400).json({
@@ -501,15 +397,7 @@ router.post('/:deviceId/files/push', upload.single('file'), async (req, res, nex
     }
     
     const localFile = req.file.path;
-    const result = await transferService.pushFileLegacy(deviceId, localFile, remote_path, project_id ? parseInt(project_id) : null);
-    
-    // 记录到开发日志
-    if (devLogger && project_id) {
-      devLogger.logFileTransfer(deviceId, remote_path, 'push', {
-        success: true,
-        file_size: req.file.size
-      }, parseInt(project_id));
-    }
+    const result = await transferService.pushFileLegacy(deviceId, localFile, remote_path);
     
     res.json({
       success: true,
@@ -553,6 +441,5 @@ router.get('/:deviceId/files/pull', async (req, res, next) => {
 module.exports = {
   router,
   setTransferService,
-  setWsService,
-  setDevLogger
+  setWsService
 };

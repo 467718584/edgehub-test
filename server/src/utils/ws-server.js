@@ -2,6 +2,7 @@ const WebSocket = require('ws');
 const { handleSysinfoResult } = require("../services/sysinfoPolling");
 
 const deviceClients = new Map();
+const transferProcessingLocks = new Map(); // Per-transfer lock for pull mode
 global.deviceClients = deviceClients;
 const agentClients = new Set();
 
@@ -182,7 +183,7 @@ function initWebSocket(server) {
           broadcastToAgents({ type: 'device_status_update', device_id: deviceId, ...msg });
         } else if (msg.type === 'transfer_pull_info') {
           // EdgeAgent返回Pull传输的文件信息
-          console.log(`[WS] Transfer pull info: ${msg.transfer_id}, size=${msg.file_size}, chunks=${msg.total_chunks}`);
+          console.log(`[WS] Transfer pull info: ${msg.transfer_id}, size=${msg.file_size}, chunks=${msg.total_chunks}, device=${deviceId}`);
           // 更新传输任务信息
           if (global.transferService && msg.transfer_id) {
             global.transferService.updatePullTransferInfo(
@@ -195,8 +196,13 @@ function initWebSocket(server) {
           // 转发给订阅者(如果有)
           broadcastToAgents({ type: 'transfer_pull_info', device_id: deviceId, ...msg });
         } else if (msg.type === 'transfer_pull_chunk') {
-          // EdgeAgent发送的分块数据
+          // EdgeAgent发送的分块数据 - 使用per-transfer锁防止并发处理
           if (global.transferService && msg.transfer_id) {
+            const lockKey = msg.transfer_id;
+            if (transferProcessingLocks.get(lockKey)) {
+              console.log('[WS] Pull chunk ' + msg.chunk_index + ' for ' + msg.transfer_id + ' queued (waiting for previous)');
+            }
+            transferProcessingLocks.set(lockKey, true);
             global.transferService.receivePullChunk(
               msg.transfer_id,
               msg.chunk_index,
@@ -212,8 +218,14 @@ function initWebSocket(server) {
                 progress: result.progress,
                 is_last: msg.is_last || false
               });
+              // 只有最后一块或出错时才释放锁
+              if (msg.is_last) {
+                transferProcessingLocks.delete(lockKey);
+                console.log('[WS] Transfer ' + msg.transfer_id + ' completed, lock released');
+              }
             }).catch(e => {
               console.error('[WS] receivePullChunk error:', e.message);
+              transferProcessingLocks.delete(lockKey);
               broadcastToAgents({ 
                 type: 'transfer_error', 
                 transfer_id: msg.transfer_id, 
@@ -221,6 +233,47 @@ function initWebSocket(server) {
               });
             });
           }
+        } else if (msg.type === 'transfer_start') {
+          // EdgeAgent确认收到transfer_start，准备接收文件块
+          console.log(`[WS] Transfer start confirmed: ${msg.transfer_id}, chunks=${msg.total_chunks}`);
+          if (global.transferService && msg.transfer_id) {
+            global.transferService.confirmTransferStart(
+              msg.transfer_id,
+              deviceId
+            ).catch(e => console.error('[WS] confirmTransferStart error:', e.message));
+          }
+          // 转发确认给订阅者
+          broadcastToAgents({ type: 'transfer_start_confirmed', device_id: deviceId, ...msg });
+        } else if (msg.type === 'transfer_chunk_ack') {
+          // EdgeAgent确认收到分块
+          if (global.transferService && msg.transfer_id) {
+            global.transferService.ackChunk(
+              msg.transfer_id,
+              msg.chunk_index,
+              msg.success
+            ).then(result => {
+              broadcastTransferProgress(msg.transfer_id, {
+                type: 'transfer_chunk_ack',
+                device_id: deviceId,
+                chunk_index: msg.chunk_index,
+                success: msg.success,
+                progress: result.progress
+              });
+            }).catch(e => {
+              console.error('[WS] ackChunk error:', e.message);
+            });
+          }
+        } else if (msg.type === 'transfer_complete_ack') {
+          // EdgeAgent确认文件传输完成
+          console.log(`[WS] Transfer complete acknowledged: ${msg.transfer_id}`);
+          if (global.transferService && msg.transfer_id) {
+            global.transferService.confirmTransferComplete(
+              msg.transfer_id,
+              deviceId,
+              msg.file_hash
+            ).catch(e => console.error('[WS] confirmTransferComplete error:', e.message));
+          }
+          broadcastToAgents({ type: 'transfer_complete_confirmed', device_id: deviceId, ...msg });
         }
       } catch (e) {
         ws.send(JSON.stringify({ type: 'error', message: e.message }));

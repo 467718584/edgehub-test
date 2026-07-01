@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const { pushCommandToDevice } = require('../utils/ws-server');
 
 // We need to access the database through deviceService since that's what's injected
 let db;
@@ -736,13 +737,56 @@ router.post('/me/projects/:projectId/commands', async (req, res, next) => {
     
     const commandId = 'cmd_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
     
-    const result = await new Promise((resolve, reject) => {
+    // 插入命令到数据库（包含project_id）
+    await new Promise((resolve, reject) => {
       db.db.run(`
-        INSERT INTO commands (command_id, device_id, command, status, timeout_ms, created_at)
-        VALUES (?, ?, ?, 'pending', ?, datetime('now'))
-      `, [commandId, device.device_id, command, (timeout || 60) * 1000], function(err) {
+        INSERT INTO commands (command_id, device_id, command, status, timeout_ms, created_at, project_id)
+        VALUES (?, ?, ?, 'pending', ?, datetime('now'), ?)
+      `, [commandId, device.device_id, command, (timeout || 60) * 1000, projectId], function(err) {
         if (err) reject(err);
-        else resolve({ lastID: this.lastID, changes: this.changes });
+        else resolve();
+      });
+    });
+    
+    // 记录到项目开发日志
+    try {
+      await new Promise((resolve, reject) => {
+        db.db.run(`
+          INSERT INTO development_logs (project_id, device_id, action_type, command, notes, success, timestamp)
+          VALUES (?, ?, 'command', ?, ?, 1, datetime('now'))
+        `, [projectId, device.device_id, command, '通过项目端点下发命令'], function(err) {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+    } catch (logErr) {
+      console.log('[WARN] Failed to log development:', logErr.message);
+    }
+    
+    // 尝试通过 WebSocket 推送命令到设备
+    let finalStatus = 'pending';
+    let mode = 'http_poll';
+    try {
+      const wsResult = await pushCommandToDevice(device.device_id, {
+        command_id: commandId,
+        command: command,
+        timeout_ms: (timeout || 60) * 1000
+      });
+      if (wsResult.success) {
+        finalStatus = 'delivered_via_ws';
+        mode = 'ws';
+      }
+    } catch (wsErr) {
+      console.log('[WARN] WS push failed, falling back to HTTP poll:', wsErr.message);
+    }
+    
+    // 更新命令状态
+    await new Promise((resolve, reject) => {
+      db.db.run(`
+        UPDATE commands SET status = ? WHERE command_id = ?
+      `, [finalStatus, commandId], function(err) {
+        if (err) reject(err);
+        else resolve();
       });
     });
     
@@ -751,8 +795,8 @@ router.post('/me/projects/:projectId/commands', async (req, res, next) => {
       data: {
         command_id: commandId,
         device_id: device.device_id,
-        status: 'pending',
-        mode: 'api'
+        status: finalStatus,
+        mode: mode
       },
       timestamp: new Date().toISOString()
     });

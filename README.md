@@ -64,9 +64,44 @@ edgehub-test/
 │       ├── docker-compose.yml
 │       ├── nginx/
 │       └── scripts/
+├── docs/
+│   └── EDGEHUB_FILE_TRANSFER.md  # 文件传输系统说明书
 ├── CHANGELOG.md                # ⭐ 版本更新记录
 └── README.md
 ```
+
+## 📡 文件传输
+
+EdgeHub 支持两种文件传输模式：
+
+### Push 模式 (服务器→设备)
+```bash
+curl -X POST http://1.13.247.173/api/v1/transfers \
+  -H "X-API-Key: edgehub_secret_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_id": "82785476b5753520",
+    "direction": "push",
+    "local_path": "/tmp/test.bin",
+    "remote_path": "C:\\Users\\Public\\test.bin"
+  }'
+```
+
+### Pull 模式 (设备→服务器)
+```bash
+curl -X POST http://1.13.247.173/api/v1/transfers/pull \
+  -H "X-API-Key: edgehub_secret_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_id": "82785476b5753520",
+    "remote_path": "C:\\Users\\Public\\test.bin",
+    "local_path": "/tmp/download.bin"
+  }'
+```
+
+详细文档: [EDGEHUB_FILE_TRANSFER.md](docs/EDGEHUB_FILE_TRANSFER.md)
+
+---
 
 ## 🚀 Docker 部署 (推荐)
 
